@@ -25,6 +25,18 @@ ScholarFlow extends Open Journal Systems with an intelligent, privacy-first loca
 
 ---
 
+## 🎯 Streamlined Dashboard Focus
+To make the editorial interface faster and more user-friendly, two legacy features were removed from the AI dashboard:
+- **Revision Analysis**: Removed revision diff tracking and version comparison tabs to eliminate interface clutter.
+- **AI Review Assistant**: Removed the standalone guidance questionnaire in favor of direct inline document markups and automated pre-screening.
+
+The workspace is now streamlined into 3 core pillars:
+1. 📖 **Document & Markups**
+2. 🤖 **AI Pre-Screening** (with real-time percentage loader)
+3. 👥 **Reviewer Matchmaking** (with real-time percentage loader)
+
+---
+
 ## 🛠️ Tech Stack
 
 - **Frontend**: Vanilla JavaScript (ES6+), Modern CSS3 Glassmorphism, SVG Micro-animations.
