@@ -2991,10 +2991,10 @@
             var isReleased = releasedReviewersMap[rec.id];
             var actionBtn = '';
             if (isReleased) {
-                actionBtn = '<span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1">⛔ Released (Quota Full)</span>';
+                actionBtn = '<span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1">⛔ Released</span>';
             } else if (currentUserInfo && currentUserInfo.isEditor) {
                 var safeName = esc(rec.name).replace(/'/g, "\\'");
-                actionBtn = '<button type="button" onclick="window.__sfOpenReleaseReviewerModal(\'' + safeName + '\', ' + rec.id + ')" style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px">⛔ Release (Quota Full)</button>';
+                actionBtn = '<button type="button" onclick="window.__sfOpenReleaseReviewerModal(\'' + safeName + '\', ' + rec.id + ')" style="background:#fee2e2;border:1px solid #fca5a5;color:#991b1b;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px">⛔ Release</button>';
             }
 
             var safeNameAssign = esc(rec.name).replace(/'/g, "\\'");
