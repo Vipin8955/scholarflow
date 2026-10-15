@@ -35,6 +35,14 @@ The workspace is now streamlined into 3 core pillars:
 2. 🤖 **AI Pre-Screening** (with real-time percentage loader)
 3. 👥 **Reviewer Matchmaking** (with real-time percentage loader)
 
+### 🎨 Single Unified Stylesheet & Typography
+- Locked all journals to a single, standardized editorial stylesheet (`Inter` / modern system typography).
+- Removed arbitrary font pickers, color pickers, and custom CSS upload options to guarantee visual stability across all journal contexts.
+
+### 🌐 English-Only Editorial Workflow
+- Locked `en` (English) as the sole active locale across the database, site, and all journal contexts.
+- Disabled the multilingual toggle block and eliminated multi-language input tabs to eliminate form clutter.
+
 ---
 
 ## 🛠️ Tech Stack
