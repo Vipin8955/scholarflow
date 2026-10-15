@@ -339,24 +339,46 @@
     }
 
     function injectNativeReviewerMatchmaking(force) {
+        // Guard: Never run on statistics, management, or admin pages
+        var path = window.location.pathname || '';
+        var search = window.location.search || '';
+        var fullUrl = path + search;
+        if (fullUrl.indexOf('/stats') !== -1 || fullUrl.indexOf('/management') !== -1 || fullUrl.indexOf('/admin') !== -1) {
+            return;
+        }
+
+        // Must strictly match the Reviewer selection panel or modal
         var reviewerPanel = document.querySelector(
-            '.listPanel--selectReviewer, .listPanel, .pkpListPanel--selectReviewer, [class*="selectReviewer"], .pkpSelectReviewerListPanel'
+            '.listPanel--selectReviewer, .pkpListPanel--selectReviewer, [class*="selectReviewer"], .pkpSelectReviewerListPanel'
         );
-        var itemsList = reviewerPanel ? reviewerPanel.querySelector(
+
+        if (!reviewerPanel) {
+            var openModal = document.querySelector('.pkp_modal_panel, .ui-dialog, [role="dialog"]');
+            if (openModal) {
+                var modalTitle = openModal.querySelector('.ui-dialog-title, .pkp_modal_title, h2, h1');
+                var titleText = modalTitle ? (modalTitle.textContent || '').toLowerCase() : '';
+                if (titleText.indexOf('reviewer') !== -1) {
+                    reviewerPanel = openModal.querySelector('.listPanel, .pkpListPanel');
+                }
+            }
+        }
+
+        if (!reviewerPanel) return;
+
+        var itemsList = reviewerPanel.querySelector(
             '.listPanel__itemsList, .listPanel__items, .pkpListPanel__items, ul'
-        ) : null;
+        );
 
         if (!itemsList) {
-            var anyItem = document.querySelector('.listPanel__item--reviewer, .listPanel__item, .pkpListPanelItem--selectReviewer');
+            var anyItem = document.querySelector('.listPanel__item--reviewer, .pkpListPanelItem--selectReviewer');
             if (anyItem) {
                 itemsList = anyItem.closest('ul, .listPanel__itemsList, .listPanel__items') || anyItem.parentElement;
-                if (itemsList) reviewerPanel = itemsList.closest('.listPanel, .listPanel--selectReviewer') || itemsList.parentElement;
             }
         }
 
         if (!itemsList) return;
 
-        var reviewerItems = itemsList.querySelectorAll('li.listPanel__item, li.pkpListPanelItem, li');
+        var reviewerItems = itemsList.querySelectorAll('li.listPanel__item, li.pkpListPanelItem');
         if (!reviewerItems || reviewerItems.length === 0) return;
 
         var sid = getActiveReviewerModalSubmissionId();
