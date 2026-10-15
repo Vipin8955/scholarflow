@@ -1,0 +1,344 @@
+/**
+ * ScholarFlow UI Styles - scholarflow.css
+ * Clean, Modern, Full-Screen Editorial & Reviewer Workspace
+ */
+
+/* ── Full Space Overlay & Container ── */
+#sfOverlay {
+    display: none;
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 2147483647 !important;
+    background: rgba(15, 23, 42, 0.65) !important;
+    backdrop-filter: blur(8px) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+    color: #1e293b !important;
+    pointer-events: auto !important;
+}
+
+#sfModalContainer {
+    position: relative !important;
+    z-index: 2147483647 !important;
+    pointer-events: auto !important;
+}
+
+#sfOverlay * {
+    pointer-events: auto;
+}
+
+.sf-modal-fullscreen {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    border: none !important;
+}
+
+.sf-modal-windowed {
+    width: 95vw !important;
+    height: 92vh !important;
+    max-width: 1500px !important;
+    max-height: 92vh !important;
+    border-radius: 16px !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.3) !important;
+    margin: auto !important;
+}
+
+/* ── Unselected Base Highlights ── */
+.sf-highlight {
+    padding: 2px 4px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    position: relative !important;
+    transition: all 0.2s ease !important;
+    box-decoration-break: clone !important;
+    -webkit-box-decoration-break: clone !important;
+    font-weight: 600 !important;
+    display: inline !important;
+}
+
+.sf-hl-yellow {
+    background: #fef08a !important;
+    border-bottom: 2px solid #eab308 !important;
+    color: #713f12 !important;
+}
+.sf-hl-green {
+    background: #bbf7d0 !important;
+    border-bottom: 2px solid #22c55e !important;
+    color: #14532d !important;
+}
+.sf-hl-blue {
+    background: #bfdbfe !important;
+    border-bottom: 2px solid #3b82f6 !important;
+    color: #1e3a5f !important;
+}
+.sf-hl-pink {
+    background: #fbcfe8 !important;
+    border-bottom: 2px solid #ec4899 !important;
+    color: #831843 !important;
+}
+
+.sf-highlight:hover {
+    filter: brightness(0.95) !important;
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.4) !important;
+}
+
+/* ── ACTIVE SELECTED COMMENT HIGHLIGHT (When clicked from comments) ── */
+@keyframes sfGlowPulseLight {
+    0% {
+        background-color: #facc15 !important;
+        color: #000000 !important;
+        box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.85), 0 0 24px rgba(250, 204, 21, 0.9) !important;
+        outline: 2px solid #ca8a04 !important;
+    }
+    50% {
+        background-color: #fde047 !important;
+        color: #000000 !important;
+        box-shadow: 0 0 0 6px rgba(253, 224, 71, 0.9), 0 0 32px rgba(253, 224, 71, 1) !important;
+        outline: 2px solid #eab308 !important;
+    }
+    100% {
+        background-color: #facc15 !important;
+        color: #000000 !important;
+        box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.85), 0 0 24px rgba(250, 204, 21, 0.9) !important;
+        outline: 2px solid #ca8a04 !important;
+    }
+}
+
+.sf-active-comment-mark {
+    animation: sfGlowPulseLight 1.2s ease-in-out infinite alternate !important;
+    background-color: #facc15 !important;
+    color: #000000 !important;
+    border-radius: 4px !important;
+    font-weight: 700 !important;
+    z-index: 100 !important;
+    position: relative !important;
+    display: inline !important;
+    box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.85), 0 0 24px rgba(250, 204, 21, 0.9) !important;
+}
+
+/* Paragraph Active Accent Bar & Illuminating Background */
+.sf-paragraph-active {
+    display: block !important;
+    border-left: 5px solid #eab308 !important;
+    background: rgba(254, 240, 138, 0.3) !important;
+    padding-left: 16px !important;
+    border-radius: 6px !important;
+    transition: all 0.3s ease !important;
+}
+
+/* Floating Focus Callout Badge pointing to the commented line */
+.sf-focus-callout {
+    position: absolute !important;
+    z-index: 2147483640 !important;
+    background: linear-gradient(135deg, #1e1b4b, #312e81) !important;
+    color: #ffffff !important;
+    border: 1px solid #818cf8 !important;
+    border-radius: 8px !important;
+    padding: 7px 14px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.4), 0 0 16px rgba(129, 140, 248, 0.5) !important;
+    pointer-events: none !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    animation: sfPopIn 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+    transform-origin: bottom left !important;
+}
+
+.sf-focus-callout::after {
+    content: '' !important;
+    position: absolute !important;
+    bottom: -6px !important;
+    left: 16px !important;
+    border-width: 6px 6px 0 6px !important;
+    border-style: solid !important;
+    border-color: #818cf8 transparent transparent transparent !important;
+}
+
+@keyframes sfPopIn {
+    0% { opacity: 0; transform: translateY(6px) scale(0.9); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Selection Tooltip Popover ── */
+#sfSelectionPopover {
+    position: fixed;
+    z-index: 2147483648;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0,0,0,0.06);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 300px;
+    max-width: 340px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    animation: sfFadeIn 0.15s ease-out;
+}
+
+@keyframes sfFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Document Reader Container (Academic Paper Style) ── */
+.sf-doc-reader {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 36px 44px;
+    color: #1e293b;
+    font-size: 16px;
+    line-height: 1.85;
+    overflow-y: auto;
+    max-height: 100%;
+    user-select: text;
+    scroll-behavior: smooth;
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+}
+
+.sf-doc-reader h1, .sf-doc-reader h2, .sf-doc-reader h3 {
+    color: #0f172a;
+    margin-top: 1.4em;
+    margin-bottom: 0.5em;
+    font-weight: 700;
+}
+
+.sf-doc-reader h1 {
+    font-size: 22px;
+    border-bottom: 2px solid #f1f5f9;
+    padding-bottom: 8px;
+}
+.sf-doc-reader h2 { font-size: 18px; }
+.sf-doc-reader h3 { font-size: 16px; color: #475569; }
+.sf-doc-reader p { margin-bottom: 1.2em; transition: all 0.3s ease; color: #334155; }
+.sf-doc-reader strong { color: #0f172a; font-weight: 700; }
+
+/* ── Comment Cards in Sidebar ── */
+.sf-comment-card {
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 10px !important;
+    padding: 14px 16px !important;
+    margin-bottom: 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    cursor: pointer !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03) !important;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.sf-comment-card:hover {
+    background: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    transform: translateX(2px) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+.sf-comment-card.sf-selected-card {
+    border-color: #6366f1 !important;
+    background: #eef2ff !important;
+    box-shadow: 0 0 0 2px #6366f1, 0 6px 20px rgba(99, 102, 241, 0.15) !important;
+    transform: translateX(4px) !important;
+}
+
+/* ── Splitter & Resizable Panes ── */
+.sf-splitter {
+    width: 10px !important;
+    margin: 0 -5px !important;
+    cursor: col-resize !important;
+    z-index: 25 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+    transition: background 0.15s ease !important;
+}
+
+.sf-splitter:hover, .sf-splitter.sf-resizing-active {
+    background: rgba(99, 102, 241, 0.12) !important;
+}
+
+.sf-splitter-bar {
+    width: 3px !important;
+    height: 48px !important;
+    border-radius: 4px !important;
+    background: #cbd5e1 !important;
+    transition: all 0.2s ease !important;
+}
+
+.sf-splitter:hover .sf-splitter-bar,
+.sf-splitter.sf-resizing-active .sf-splitter-bar {
+    width: 4px !important;
+    height: 64px !important;
+    background: #4f46e5 !important;
+    box-shadow: 0 0 10px rgba(79, 70, 229, 0.6) !important;
+}
+
+body.sf-resizing,
+body.sf-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+body.sf-resizing iframe,
+body.sf-resizing embed,
+body.sf-resizing object,
+body.sf-resizing canvas {
+    pointer-events: none !important;
+}
+
+/* ── Floating Launcher Trigger Button (Max z-index to sit on top of all PKP modals) ── */
+#sfTriggerBtn {
+    position: fixed !important;
+    z-index: 2147483647 !important;
+    pointer-events: auto !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    touch-action: none !important;
+}
+
+#sfTriggerBtn * {
+    pointer-events: auto !important;
+}
+
+/* ── Native OJS Reviewer Matchmaking UI Injections ── */
+.sf-ojs-match-badge {
+    transition: all 0.2s ease !important;
+}
+.sf-ojs-match-badge:hover {
+    transform: scale(1.04);
+}
+.sf-ojs-match-card {
+    transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+.sf-ojs-match-card:hover {
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08) !important;
+    border-color: #cbd5e1 !important;
+}
+.sf-native-match-banner {
+    animation: sfFadeSlideIn 0.3s ease-out;
+}
+@keyframes sfFadeSlideIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
