@@ -7,7 +7,7 @@ venv/
 env/
 *.db
 *.sqlite3
-*.sql
+!ojs_dump.sql
 
 # Node / Web
 node_modules/
