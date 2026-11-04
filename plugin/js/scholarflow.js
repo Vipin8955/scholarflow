@@ -487,7 +487,11 @@
                 readerWrap.style.display = isHidden ? 'block' : 'none';
                 toggleReaderBtn.innerHTML = isHidden ? '📖 Hide Manuscript Reader' : '📖 View Manuscript & Markups';
                 if (isHidden) {
+                    currentSubmissionId = String(sid);
+                    ensureSelectionPopover();
                     loadDocumentViewer(sid);
+                    bindDocumentSelectionListeners();
+                    initSplitterResize();
                 }
             };
         }
@@ -502,6 +506,7 @@
 
         // Trigger real-time AI audit fetch
         currentSubmissionId = String(sid);
+        ensureSelectionPopover();
         runAnalysis(sid, false, 'global');
     }
 
@@ -1506,7 +1511,7 @@ function injectNativeReviewerMatchmaking(force) {
     // ── Splitter Resizer for Document & Comments Panes ─────────────────────
     function initSplitterResize() {
         var splitter = document.getElementById('sfSplitter');
-        var panelViewer = document.getElementById('sfPanelViewer');
+        var panelViewer = document.getElementById('sfPanelViewer') || (splitter ? splitter.parentElement : null);
         var docCol = document.getElementById('sfDocCol');
         var commentsCol = document.getElementById('sfCommentsCol');
 
@@ -1915,32 +1920,7 @@ function injectNativeReviewerMatchmaking(force) {
 
             '</div></div>',
 
-            /* Selection Popover for Highlighting */
-            '<div id="sfSelectionPopover">',
-              '<div style="font-size:12px;font-weight:700;color:#0f172a;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">',
-                '<span>Highlight &amp; Add Review Comment</span>',
-                '<div style="display:flex;gap:6px">',
-                  '<span id="sfColorDot-yellow" onclick="window.__sfSetColor(\'yellow\')" style="width:16px;height:16px;border-radius:50%;background:#eab308;cursor:pointer;display:inline-block;border:2px solid #1e1b4b;transition:all 0.15s" title="Yellow"></span>',
-                  '<span id="sfColorDot-green" onclick="window.__sfSetColor(\'green\')" style="width:16px;height:16px;border-radius:50%;background:#22c55e;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Green"></span>',
-                  '<span id="sfColorDot-blue" onclick="window.__sfSetColor(\'blue\')" style="width:16px;height:16px;border-radius:50%;background:#3b82f6;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Blue"></span>',
-                  '<span id="sfColorDot-pink" onclick="window.__sfSetColor(\'pink\')" style="width:16px;height:16px;border-radius:50%;background:#ec4899;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Pink"></span>',
-                '</div>',
-              '</div>',
-              /* Selected text preview strip */
-              '<div id="sfSelectionPreview" style="background:#f1f5f9;border-left:3px solid #4f46e5;border-radius:4px;padding:5px 8px;margin-bottom:7px;font-size:11px;color:#475569;font-style:italic;max-height:40px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>',
-              '<textarea id="sfCommentInput" placeholder="Write feedback, question, or revision note..." style="width:100%;height:65px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;color:#0f172a;padding:8px;font-size:12px;box-sizing:border-box;resize:none;font-family:inherit"></textarea>',
-              '<div id="sfConfidentialOptionWrap" style="margin-top:6px;margin-bottom:6px;display:flex;align-items:center;gap:6px;background:#fef3c7;border:1px solid #fde68a;padding:6px 9px;border-radius:6px">',
-                '<input type="checkbox" id="sfConfidentialCheckbox" style="cursor:pointer;accent-color:#d97706;width:15px;height:15px;margin:0">',
-                '<label for="sfConfidentialCheckbox" style="font-size:11px;font-weight:700;color:#92400e;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">',
-                  '<span>🔒 Note for Editor only</span>',
-                  '<span style="font-weight:400;font-size:10px;color:#b45309">(Confidential: strictly hidden from author &amp; other reviewers)</span>',
-                '</label>',
-              '</div>',
-              '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">',
-                '<button onclick="window.__sfCancelPopover()" style="background:none;border:none;color:#64748b;font-size:12px;font-weight:600;cursor:pointer;padding:4px 8px">Cancel</button>',
-                '<button onclick="__sfSaveAnnotation()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
-              '</div>',
-            '</div>',
+            /* Global Selection Popover is dynamically managed via ensureSelectionPopover() */
 
             /* Embedded Core CSS to guarantee styles apply instantly */
             '<style>',
@@ -1980,33 +1960,98 @@ function injectNativeReviewerMatchmaking(force) {
         fetchSubmissionsList();
 
         // Setup Document Selection Listener
-        // Track mousedown position to distinguish genuine drag-selections from single clicks
+        bindDocumentSelectionListeners();
+    }
+
+    // ── Stored Range for pending annotation ───────────────────────────────
+    var pendingRange = null; // Stores the cloned Range for use at save time
+
+    // ── Ensure Selection Popover in DOM ───────────────────────────────────
+    function ensureSelectionPopover() {
+        if (document.getElementById('sfSelectionPopover')) return;
+        var pop = document.createElement('div');
+        pop.id = 'sfSelectionPopover';
+        pop.style.display = 'none';
+        pop.style.position = 'fixed';
+        pop.style.zIndex = '2147483648';
+        pop.innerHTML = [
+            '<div style="font-size:12px;font-weight:700;color:#0f172a;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">',
+            '  <span>Highlight &amp; Add Review Comment</span>',
+            '  <div style="display:flex;gap:6px">',
+            '    <span id="sfColorDot-yellow" onclick="window.__sfSetColor(\'yellow\')" style="width:16px;height:16px;border-radius:50%;background:#eab308;cursor:pointer;display:inline-block;border:2px solid #1e1b4b;transition:all 0.15s" title="Yellow"></span>',
+            '    <span id="sfColorDot-green" onclick="window.__sfSetColor(\'green\')" style="width:16px;height:16px;border-radius:50%;background:#22c55e;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Green"></span>',
+            '    <span id="sfColorDot-blue" onclick="window.__sfSetColor(\'blue\')" style="width:16px;height:16px;border-radius:50%;background:#3b82f6;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Blue"></span>',
+            '    <span id="sfColorDot-pink" onclick="window.__sfSetColor(\'pink\')" style="width:16px;height:16px;border-radius:50%;background:#ec4899;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Pink"></span>',
+            '  </div>',
+            '</div>',
+            '<div id="sfSelectionPreview" style="background:#f1f5f9;border-left:3px solid #4f46e5;border-radius:4px;padding:5px 8px;margin-bottom:7px;font-size:11px;color:#475569;font-style:italic;max-height:40px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>',
+            '<textarea id="sfCommentInput" placeholder="Write feedback, question, or revision note..." style="width:100%;height:65px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;color:#0f172a;padding:8px;font-size:12px;box-sizing:border-box;resize:none;font-family:inherit"></textarea>',
+            '<div id="sfConfidentialOptionWrap" style="margin-top:6px;margin-bottom:6px;display:flex;align-items:center;gap:6px;background:#fef3c7;border:1px solid #fde68a;padding:6px 9px;border-radius:6px">',
+            '  <input type="checkbox" id="sfConfidentialCheckbox" style="cursor:pointer;accent-color:#d97706;width:15px;height:15px;margin:0">',
+            '  <label for="sfConfidentialCheckbox" style="font-size:11px;font-weight:700;color:#92400e;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">',
+            '    <span>🔒 Note for Editor only</span>',
+            '    <span style="font-weight:400;font-size:10px;color:#b45309">(Confidential: strictly hidden from author &amp; other reviewers)</span>',
+            '  </label>',
+            '</div>',
+            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">',
+            '  <button type="button" onclick="window.__sfCancelPopover()" style="background:none;border:none;color:#64748b;font-size:12px;font-weight:600;cursor:pointer;padding:4px 8px">Cancel</button>',
+            '  <button type="button" onclick="__sfSaveAnnotation()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
+            '</div>'
+        ].join('\n');
+        document.body.appendChild(pop);
+    }
+
+    var _sfSelectionListening = false;
+    var _sfMouseDownX = 0;
+    var _sfMouseDownY = 0;
+    var _sfSelectingInCanvas = false;
+
+    function bindDocumentSelectionListeners() {
+        ensureSelectionPopover();
         var docCanvas = document.getElementById('sfDocCanvas');
-        if (docCanvas) {
-            var _mdX = 0, _mdY = 0;
+        if (!docCanvas) return;
+
+        if (!docCanvas._sfCanvasMouseDownBound) {
+            docCanvas._sfCanvasMouseDownBound = true;
             docCanvas.addEventListener('mousedown', function(e) {
-                _mdX = e.clientX;
-                _mdY = e.clientY;
+                var pop = document.getElementById('sfSelectionPopover');
+                if (pop && pop.contains(e.target)) return;
+                _sfMouseDownX = e.clientX;
+                _sfMouseDownY = e.clientY;
+                _sfSelectingInCanvas = true;
             });
-            docCanvas.addEventListener('mouseup', function(e) {
-                var dx = Math.abs(e.clientX - _mdX);
-                var dy = Math.abs(e.clientY - _mdY);
-                // Only process if user actually dragged (not a plain click)
-                if (dx > 5 || dy > 5) {
-                    handleTextSelection(e);
-                } else {
-                    // Single click — dismiss any open popover
-                    var pop = document.getElementById('sfSelectionPopover');
-                    if (pop && pop.style.display === 'flex') {
+        }
+
+        if (!_sfSelectionListening) {
+            _sfSelectionListening = true;
+            document.addEventListener('mouseup', function(e) {
+                var pop = document.getElementById('sfSelectionPopover');
+                if (pop && pop.contains(e.target)) return;
+
+                if (_sfSelectingInCanvas) {
+                    _sfSelectingInCanvas = false;
+                    var dx = Math.abs(e.clientX - _sfMouseDownX);
+                    var dy = Math.abs(e.clientY - _sfMouseDownY);
+                    var sel = window.getSelection();
+                    var hasText = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
+                    if (dx > 5 || dy > 5 || hasText) {
+                        setTimeout(function() {
+                            handleTextSelection(e);
+                        }, 10);
+                        return;
+                    }
+                }
+
+                // If clicked outside popover with no active canvas selection, dismiss
+                if (pop && pop.style.display === 'flex') {
+                    var sel = window.getSelection();
+                    if (!sel || sel.isCollapsed) {
                         hideSelectionPopover();
                     }
                 }
             });
         }
     }
-
-    // ── Stored Range for pending annotation ───────────────────────────────
-    var pendingRange = null; // Stores the cloned Range for use at save time
 
     // ── Set Color in Popover ───────────────────────────────────────────────
     function setColor(color) {
@@ -2027,6 +2072,7 @@ function injectNativeReviewerMatchmaking(force) {
 
     // ── Handle Mouseup Text Selection ──────────────────────────────────────
     function handleTextSelection(e) {
+        ensureSelectionPopover();
         var pop = document.getElementById('sfSelectionPopover');
         if (pop && pop.contains(e.target)) return;
 
@@ -2042,15 +2088,25 @@ function injectNativeReviewerMatchmaking(force) {
             return;
         }
 
+        var docCanvas = document.getElementById('sfDocCanvas');
+        if (docCanvas) {
+            var anchorInCanvas = docCanvas.contains(selection.anchorNode);
+            var focusInCanvas = docCanvas.contains(selection.focusNode);
+            if (!anchorInCanvas && !focusInCanvas) {
+                return;
+            }
+        }
+
         // Store the range NOW (while selection is still live)
         pendingRange = (selection.rangeCount > 0) ? selection.getRangeAt(0).cloneRange() : null;
 
         var pid = getSelectedParagraphId(selection);
         currentSelectedRange = { text: text, paragraphId: pid };
 
-        // DON'T clear the native browser selection — keep blue highlight visible while popover is open
-        // The popover shows a text preview so the user knows what they selected
-        showSelectionPopover(e.clientX, e.clientY, text);
+        // Position popover
+        var clientX = (e && typeof e.clientX === 'number') ? e.clientX : (window.innerWidth / 2);
+        var clientY = (e && typeof e.clientY === 'number') ? e.clientY : (window.innerHeight / 2);
+        showSelectionPopover(clientX, clientY, text);
     }
 
     function getSelectedParagraphId(selection) {
@@ -2065,6 +2121,7 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
     function showSelectionPopover(x, y, previewText) {
+        ensureSelectionPopover();
         var pop = document.getElementById('sfSelectionPopover');
         if (!pop) return;
 
@@ -2077,21 +2134,28 @@ function injectNativeReviewerMatchmaking(force) {
 
         pop.style.display = 'flex';
         // Position near the mouse but keep within viewport
-        var popW = 300, popH = 180;
-        var left = Math.min(x, window.innerWidth - popW - 12);
-        var top  = y + 12;
-        if (top + popH > window.innerHeight) top = y - popH - 8;
-        pop.style.left = Math.max(8, left) + 'px';
-        pop.style.top  = Math.max(8, top)  + 'px';
+        var popW = 320, popH = 210;
+        var left = Math.min(x, window.innerWidth - popW - 16);
+        var top  = y + 14;
+        if (top + popH > window.innerHeight) top = Math.max(10, y - popH - 10);
+        pop.style.left = Math.max(10, left) + 'px';
+        pop.style.top  = Math.max(10, top)  + 'px';
 
         var txt = document.getElementById('sfCommentInput');
-        if (txt) txt.value = '';
+        if (txt) {
+            txt.value = '';
+            txt.onkeydown = function(ev) {
+                if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+                    ev.preventDefault();
+                    saveAnnotation();
+                }
+            };
+        }
         var confWrap = document.getElementById('sfConfidentialOptionWrap');
         if (confWrap) {
             // Only reviewers submit confidential notes to the editor; editors write editorial comments
             confWrap.style.display = (currentUserInfo && currentUserInfo.isEditor) ? 'none' : 'flex';
         }
-        // Don't auto-focus textarea — it would clear the browser selection
         setColor(selectedHighlightColor || 'yellow');
     }
 
@@ -2276,8 +2340,13 @@ function injectNativeReviewerMatchmaking(force) {
     // ── Load Document Viewer ───────────────────────────────────────────────
     function loadDocumentViewer(sid) {
         var activeSid = sid || currentSubmissionId || '1';
+        currentSubmissionId = String(activeSid);
         var docCanvas = document.getElementById('sfDocCanvas');
         var titleHeader = document.getElementById('sfDocTitleHeader');
+
+        ensureSelectionPopover();
+        bindDocumentSelectionListeners();
+        initSplitterResize();
 
         if (docCanvas) {
             docCanvas.innerHTML = [
@@ -2300,13 +2369,17 @@ function injectNativeReviewerMatchmaking(force) {
             .then(function (data) {
                 if (String(activeSid) !== String(currentSubmissionId)) return;
                 if (data && data.success && data.html) {
-                    if (docCanvas) docCanvas.innerHTML = data.html;
+                    if (docCanvas) {
+                        docCanvas.innerHTML = data.html;
+                        bindDocumentSelectionListeners();
+                    }
                     if (titleHeader && data.title) titleHeader.textContent = data.title + ' (' + (data.filename || '') + ')';
                     if (data.user) {
                         currentUserInfo = data.user;
                         applyUserRoleGating();
                     }
                     loadAnnotations(activeSid);
+                    initSplitterResize();
                 } else if (data && data.error) {
                     if (docCanvas) {
                         docCanvas.innerHTML = [
