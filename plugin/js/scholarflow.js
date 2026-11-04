@@ -8,6 +8,7 @@
 
     // Expose helpers globally
     window.__sfOpen = sfOpen;
+    window.__sfOpenInScreenReader = openInScreenReader;
     window.__sfClose = sfClose;
     window.__sfToggleMode = toggleWindowMode;
     window.__sfToggleCommentsSidebar = toggleCommentsSidebar;
@@ -397,8 +398,8 @@
             '    <button id="sfNativeReanalyzeBtn" type="button" class="sf-native-btn sf-native-btn-primary" title="Query Ollama in real-time to analyze this manuscript from scratch">',
             '      🔄 Re-Analyze with AI (Real-Time)',
             '    </button>',
-            '    <button id="sfNativeToggleReaderBtn" type="button" class="sf-native-btn sf-native-btn-secondary" title="Expand interactive manuscript viewer & inline peer review markups">',
-            '      📖 View Manuscript &amp; Markups',
+            '    <button id="sfNativeOpenReaderBtn" type="button" class="sf-native-btn sf-native-btn-secondary" title="Open full in-screen manuscript reader with interactive peer review markups">',
+            '      📖 Open In-Screen Manuscript Reader',
             '    </button>',
             '  </div>',
             '</div>',
@@ -419,45 +420,15 @@
             '    <div>Querying local Ollama LLM (qwen2.5:3b) in real-time for Submission #' + esc(String(sid)) + '...</div>',
             '  </div>',
             '</div>',
-            '<div id="sfInlineReaderWrap" style="display:none;border-top:1px solid #e2e8f0;background:#f8fafc">',
-            '  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 18px;background:#f1f5f9;border-bottom:1px solid #e2e8f0">',
-            '    <div style="font-size:12px;font-weight:700;color:#334155;display:flex;align-items:center;gap:6px">',
-            '      <span>📖 In-Platform Manuscript Reader</span>',
-            '      <span style="font-weight:normal;color:#64748b">&bull; Select any sentence to leave peer review markups</span>',
-            '    </div>',
-            '    <div style="display:flex;align-items:center;gap:8px">',
-            '      <button type="button" onclick="__sfExportMarkups()" class="sf-native-btn sf-native-btn-secondary" style="padding:4px 10px;font-size:11px">',
-            '        📥 Export Markups',
-            '      </button>',
-            '      <button type="button" id="sfCloseInlineReaderBtn" class="sf-native-btn sf-native-btn-secondary" style="padding:4px 10px;font-size:11px">',
-            '        ✕ Collapse Reader',
-            '      </button>',
-            '    </div>',
+            '<div class="sf-native-card-footer" style="padding:14px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;border-radius:0 0 12px 12px;flex-wrap:wrap;gap:10px">',
+            '  <div style="font-size:12px;color:#475569;display:flex;align-items:center;gap:8px">',
+            '    <span style="font-size:16px">📄</span>',
+            '    <span>Ready to evaluate the full submission? Read formatted text, highlight paragraphs, and leave peer review markups.</span>',
             '  </div>',
-            '  <div style="display:flex;height:650px;overflow:hidden;position:relative">',
-            '    <div id="sfDocCol" style="flex:0 0 68%;width:68%;display:flex;flex-direction:column;padding:16px 20px;overflow:hidden;border-right:1px solid #e2e8f0;box-sizing:border-box">',
-            '      <div id="sfDocCanvas" class="sf-doc-reader" style="flex:1"></div>',
-            '    </div>',
-            '    <div id="sfSplitter" class="sf-splitter" title="Drag to adjust width">',
-            '      <div class="sf-splitter-bar"></div>',
-            '    </div>',
-            '    <div id="sfCommentsCol" style="flex:0 0 32%;width:32%;display:flex;flex-direction:column;background:#ffffff;overflow:hidden;padding:16px 18px;box-sizing:border-box">',
-            '      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f1f5f9">',
-            '        <div style="font-size:14px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px">',
-            '          <span>Inline Markups</span>',
-            '          <span id="sfCommentsCountBadge" style="font-size:11px;font-weight:800;background:#4f46e5;color:#ffffff;padding:2px 8px;border-radius:12px">0</span>',
-            '        </div>',
-            '      </div>',
-            '      <div id="sfCommentTabsWrap" style="display:flex;align-items:center;gap:3px;background:#f1f5f9;padding:3px;border-radius:8px;margin-bottom:8px">',
-            '        <button id="sfCommentTab-editor" onclick="__sfFilterCommentsTab(\'editor\')" class="sf-comment-filter-btn" style="flex:1;background:#ffffff;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:700;color:#4f46e5;cursor:pointer">🟣 Editor (<span id="sfCountEditor">0</span>)</button>',
-            '        <button id="sfCommentTab-reviewer_to_editor" onclick="__sfFilterCommentsTab(\'reviewer_to_editor\')" class="sf-comment-filter-btn" style="flex:1.2;background:none;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:600;color:#64748b;cursor:pointer"><span id="sfRevToEdLabel">🔒 To Editor</span> (<span id="sfCountReviewerToEditor">0</span>)</button>',
-            '        <button id="sfCommentTab-reviewer" onclick="__sfFilterCommentsTab(\'reviewer\')" class="sf-comment-filter-btn" style="flex:1;background:none;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:600;color:#64748b;cursor:pointer">🔵 Reviewers (<span id="sfCountReviewer">0</span>)</button>',
-            '      </div>',
-            '      <div id="sfCommentsList" style="flex:1;overflow-y:auto;padding-right:4px">',
-            '        <div style="color:#94a3b8;font-size:13px;text-align:center;padding:40px 10px">No inline comments yet.<br>Highlight text on the left to add markups.</div>',
-            '      </div>',
-            '    </div>',
-            '  </div>',
+            '  <button id="sfNativeFooterReaderBtn" type="button" class="sf-native-btn sf-native-btn-primary" style="background:#4f46e5;color:#ffffff;border:none;padding:8px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,0.25)">',
+            '    <span>📖 Open In-Screen Manuscript Reader</span>',
+            '    <span>&rarr;</span>',
+            '  </button>',
             '</div>'
         ].join('\n');
 
@@ -476,31 +447,19 @@
             };
         }
 
-        var toggleReaderBtn = document.getElementById('sfNativeToggleReaderBtn');
-        var closeReaderBtn = document.getElementById('sfCloseInlineReaderBtn');
-        var readerWrap = document.getElementById('sfInlineReaderWrap');
-
-        if (toggleReaderBtn && readerWrap) {
-            toggleReaderBtn.onclick = function(e) {
+        var openReaderBtnTop = document.getElementById('sfNativeOpenReaderBtn') || document.getElementById('sfNativeToggleReaderBtn');
+        if (openReaderBtnTop) {
+            openReaderBtnTop.onclick = function(e) {
                 e.preventDefault();
-                var isHidden = readerWrap.style.display === 'none';
-                readerWrap.style.display = isHidden ? 'block' : 'none';
-                toggleReaderBtn.innerHTML = isHidden ? '📖 Hide Manuscript Reader' : '📖 View Manuscript & Markups';
-                if (isHidden) {
-                    currentSubmissionId = String(sid);
-                    ensureSelectionPopover();
-                    loadDocumentViewer(sid);
-                    bindDocumentSelectionListeners();
-                    initSplitterResize();
-                }
+                openInScreenReader(sid);
             };
         }
 
-        if (closeReaderBtn && readerWrap) {
-            closeReaderBtn.onclick = function(e) {
+        var openReaderBtnFooter = document.getElementById('sfNativeFooterReaderBtn');
+        if (openReaderBtnFooter) {
+            openReaderBtnFooter.onclick = function(e) {
                 e.preventDefault();
-                readerWrap.style.display = 'none';
-                if (toggleReaderBtn) toggleReaderBtn.innerHTML = '📖 View Manuscript & Markups';
+                openInScreenReader(sid);
             };
         }
 
@@ -1154,35 +1113,44 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
     // ── Open modal ─────────────────────────────────────────────────────────
-    function sfOpen(sid) {
+    // ── Open In-Screen Manuscript Reader ────────────────────────────────────
+    function openInScreenReader(sid) {
         try {
             var urlSid = getExplicitSubmissionIdFromUrl();
             var targetSid = sid || currentSubmissionId || urlSid || '1';
             currentSubmissionId = String(targetSid);
 
-            // Native In-Page Merged Experience: If on workflow page, scroll to native card and focus it
-            var nativeCard = document.getElementById('sfNativeWorkflowCard');
-            if (!nativeCard) {
-                injectNativeWorkflowCard(targetSid);
-                nativeCard = document.getElementById('sfNativeWorkflowCard');
+            var overlay = document.getElementById('sfOverlay');
+            if (!overlay) {
+                buildModal(targetSid);
+                overlay = document.getElementById('sfOverlay');
             }
 
-            if (nativeCard) {
-                nativeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                nativeCard.style.outline = '3px solid #4f46e5';
-                nativeCard.style.boxShadow = '0 0 20px rgba(79, 70, 229, 0.3)';
-                setTimeout(function() {
-                    nativeCard.style.outline = 'none';
-                    nativeCard.style.boxShadow = '0 4px 16px rgba(15, 23, 42, 0.04)';
-                }, 2000);
-                return;
-            }
+            if (overlay) {
+                overlay.style.display = 'flex';
+                window.__sfModalOpen = true;
+                document.body.style.overflow = 'hidden';
 
-            // If not on a workflow page, navigate directly to the submission workflow in OJS
-            window.location.href = getContextBase() + '/workflow/access/' + targetSid;
+                ensureSelectionPopover();
+                bindDocumentSelectionListeners();
+                initSplitterResize();
+
+                var subSelect = document.getElementById('sfSubmissionSelect');
+                if (subSelect && String(subSelect.value) !== String(targetSid)) {
+                    subSelect.value = targetSid;
+                }
+
+                __sfSwitchTab('viewer');
+                loadDocumentViewer(targetSid);
+            }
         } catch (err) {
-            console.error('ScholarFlow sfOpen error:', err);
+            console.error('ScholarFlow openInScreenReader error:', err);
         }
+    }
+
+    // ── Open modal ─────────────────────────────────────────────────────────
+    function sfOpen(sid) {
+        openInScreenReader(sid);
     }
 
     function renderEmptyJournalState() {
@@ -1227,11 +1195,17 @@ function injectNativeReviewerMatchmaking(force) {
         var blocker = document.getElementById('sfResizeBlocker');
         if (blocker) blocker.remove();
         hideSelectionPopover();
-
-        // Restore floating button
-        var trigger = document.getElementById('sfTriggerBtn');
-        if (trigger) trigger.style.display = 'flex';
     }
+
+    // Dismiss in-screen reader on Escape key press
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' || e.key === 'Esc') {
+            var overlay = document.getElementById('sfOverlay');
+            if (overlay && overlay.style.display !== 'none') {
+                sfClose();
+            }
+        }
+    });
 
     // ── Toggle Fullscreen / Windowed Mode ──────────────────────────────────
     function toggleWindowMode() {
