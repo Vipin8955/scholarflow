@@ -27,7 +27,20 @@
     window.__sfOnHighlightClick = onHighlightClick;
     window.__sfSetColor = setColor;
     window.__sfCancelPopover = cancelPopover;
-    window.__sfReRunAnalysis = function() { openReRunConfirmModal(); };
+    window.__sfDirectReRunAnalysis = function() {
+        var sid = currentSubmissionId || '1';
+        lastEvaluatedSubmissions['prescreen'] = sid;
+        runAnalysis(sid, true, 'global');
+    };
+    window.__sfReRunAnalysis = function() {
+        window.__sfDirectReRunAnalysis();
+    };
+    window.__sfOpenPreScreen = function(sid) {
+        openInScreenReader(sid, 'prescreen');
+    };
+    window.__sfOpenReviewers = function(sid) {
+        openInScreenReader(sid, 'reviewers');
+    };
     window.__sfReRunReviewers = function() {
         var sid = currentSubmissionId || '1';
         if (window.__sfMatchmakingCache) delete window.__sfMatchmakingCache[sid];
@@ -219,44 +232,67 @@
             }
         }
 
-        if (targetContainer && !document.getElementById('sfNativeWorkflowBtn')) {
-            var nativeBtn = document.createElement('button');
-            nativeBtn.id = 'sfNativeWorkflowBtn';
-            nativeBtn.className = 'pkp_button pkp_button_primary scholarflow-native-btn';
-            nativeBtn.type = 'button';
-            nativeBtn.style.cssText = [
-                'margin-left: 8px !important',
-                'margin-right: 8px !important',
-                'display: inline-flex !important',
-                'align-items: center !important',
-                'gap: 6px !important',
-                'background: linear-gradient(135deg, #4f46e5, #4338ca) !important',
-                'border: 1px solid #3730a3 !important',
-                'color: #ffffff !important',
-                'font-weight: 700 !important',
-                'font-size: 12px !important',
-                'padding: 7px 14px !important',
-                'border-radius: 6px !important',
-                'box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3) !important',
-                'cursor: pointer !important',
-                'vertical-align: middle !important',
-                'transition: all 0.2s ease !important'
+        if (targetContainer && !document.getElementById('sfNativeWorkflowActionsWrap')) {
+            var actionsWrap = document.createElement('div');
+            actionsWrap.id = 'sfNativeWorkflowActionsWrap';
+            actionsWrap.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-left:8px;vertical-align:middle;';
+
+            var readerBtn = document.createElement('button');
+            readerBtn.id = 'sfNativeWorkflowReaderBtn';
+            readerBtn.className = 'pkp_button pkp_button_primary scholarflow-native-btn';
+            readerBtn.type = 'button';
+            readerBtn.style.cssText = [
+                'display:inline-flex !important',
+                'align-items:center !important',
+                'gap:6px !important',
+                'background:linear-gradient(135deg, #4f46e5, #4338ca) !important',
+                'border:1px solid #3730a3 !important',
+                'color:#ffffff !important',
+                'font-weight:700 !important',
+                'font-size:12px !important',
+                'padding:7px 14px !important',
+                'border-radius:6px !important',
+                'box-shadow:0 2px 6px rgba(79, 70, 229, 0.3) !important',
+                'cursor:pointer !important',
+                'vertical-align:middle !important',
+                'transition:all 0.2s ease !important'
             ].join(';');
-            nativeBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>ScholarFlow AI Assistant</span>';
-            nativeBtn.onclick = function(e) {
+            readerBtn.innerHTML = '<span style="font-size:14px">📖</span> <span>In-Screen Manuscript Reader</span>';
+            readerBtn.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                window.__sfOpen(sid || currentSubmissionId || '1');
+                window.__sfOpenInScreenReader(sid || currentSubmissionId || '1', 'viewer');
             };
-            nativeBtn.onmouseenter = function() {
-                nativeBtn.style.background = 'linear-gradient(135deg, #4338ca, #3730a3)';
-                nativeBtn.style.transform = 'translateY(-1px)';
+
+            var aiBtn = document.createElement('button');
+            aiBtn.id = 'sfNativeWorkflowAiBtn';
+            aiBtn.className = 'pkp_button scholarflow-native-btn-ai';
+            aiBtn.type = 'button';
+            aiBtn.style.cssText = [
+                'display:inline-flex !important',
+                'align-items:center !important',
+                'gap:6px !important',
+                'background:#eff6ff !important',
+                'border:1px solid #bfdbfe !important',
+                'color:#1d4ed8 !important',
+                'font-weight:700 !important',
+                'font-size:12px !important',
+                'padding:7px 14px !important',
+                'border-radius:6px !important',
+                'cursor:pointer !important',
+                'vertical-align:middle !important',
+                'transition:all 0.2s ease !important'
+            ].join(';');
+            aiBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>AI Pre-Screening</span>';
+            aiBtn.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.__sfOpenInScreenReader(sid || currentSubmissionId || '1', 'prescreen');
             };
-            nativeBtn.onmouseleave = function() {
-                nativeBtn.style.background = 'linear-gradient(135deg, #4f46e5, #4338ca)';
-                nativeBtn.style.transform = 'translateY(0)';
-            };
-            targetContainer.appendChild(nativeBtn);
+
+            actionsWrap.appendChild(readerBtn);
+            actionsWrap.appendChild(aiBtn);
+            targetContainer.appendChild(actionsWrap);
         }
 
         // 2. Primary Navigation Menu in OJS Backend Header
@@ -340,133 +376,25 @@
     }
 
     
+    // ── Helper: Check if strictly on a single submission editorial workflow page ────
+    function isEditorialWorkflowPage() {
+        var path = window.location.pathname || '';
+        var search = window.location.search || '';
+        var full = path + search;
+        // Strictly exclude dashboard, submissions lists, stats, settings, queues
+        if (full.indexOf('/submissions') !== -1 || full.indexOf('/dashboard') !== -1 || 
+            full.indexOf('/stats') !== -1 || full.indexOf('/management') !== -1 || 
+            full.indexOf('/admin') !== -1 || full.indexOf('/settings') !== -1) {
+            return false;
+        }
+        return /\/workflow\/(?:index|access)\/(\d+)/i.test(full) || /[?&]workflowSubmissionId=(\d+)/i.test(full);
+    }
+
     // ── Native In-Workflow AI Pre-Screening & Quality Audit Card ─────────
     function injectNativeWorkflowCard(explicitSid) {
-        var sid = explicitSid || getSubmissionId();
-        if (!sid) return;
-
-        // Guard: Don't inject on statistics or settings management pages
-        var fullUrl = (window.location.pathname || '') + (window.location.search || '');
-        if (fullUrl.indexOf('/stats') !== -1 || fullUrl.indexOf('/management/settings') !== -1) {
-            return;
-        }
-
-        // Check if card is already mounted for this submission
-        var existingCard = document.getElementById('sfNativeWorkflowCard');
-        if (existingCard) {
-            if (existingCard.getAttribute('data-sid') === String(sid)) {
-                return;
-            } else {
-                existingCard.parentNode.removeChild(existingCard);
-            }
-        }
-
-        // Candidate mount points in OJS 3.5 Editorial Workflow
-        var mountTarget = null;
-        var insertBeforeNode = null;
-
-        var workflowHeader = document.querySelector('.pkp_workflow__header, .pkpHeader, .pkp_page_title');
-        var tabsContainer = document.querySelector('.pkpTabs, [role="tablist"], .pkp_workflow__content, .pkp_workflow');
-        var appPage = document.querySelector('.app__main .app__page, #app-main, main, .pkp_structure_main');
-
-        if (workflowHeader && workflowHeader.parentNode) {
-            mountTarget = workflowHeader.parentNode;
-            insertBeforeNode = workflowHeader.nextSibling;
-        } else if (tabsContainer && tabsContainer.parentNode) {
-            mountTarget = tabsContainer.parentNode;
-            insertBeforeNode = tabsContainer;
-        } else if (appPage) {
-            mountTarget = appPage;
-            insertBeforeNode = appPage.firstChild;
-        }
-
-        if (!mountTarget) return;
-
-        var card = document.createElement('div');
-        card.id = 'sfNativeWorkflowCard';
-        card.className = 'sf-native-workflow-card pkp_card';
-        card.setAttribute('data-sid', String(sid));
-
-        card.innerHTML = [
-            '<div class="sf-native-card-header">',
-            '  <div class="sf-native-header-title">',
-            '    <span class="sf-native-ai-tag">🤖 SCHOLARFLOW AI</span>',
-            '    <strong style="font-size:15px;color:#0f172a">Editorial Pre-Screening &amp; Quality Audit</strong>',
-            '    <span class="sf-native-model-tag">⚡ Ollama qwen2.5:3b (Real-Time)</span>',
-            '  </div>',
-            '  <div class="sf-native-header-actions">',
-            '    <button id="sfNativeReanalyzeBtn" type="button" class="sf-native-btn sf-native-btn-primary" title="Query Ollama in real-time to analyze this manuscript from scratch">',
-            '      🔄 Re-Analyze with AI (Real-Time)',
-            '    </button>',
-            '    <button id="sfNativeOpenReaderBtn" type="button" class="sf-native-btn sf-native-btn-secondary" title="Open full in-screen manuscript reader with interactive peer review markups">',
-            '      📖 Open In-Screen Manuscript Reader',
-            '    </button>',
-            '  </div>',
-            '</div>',
-            '<div class="sf-native-summary-strip">',
-            '  <div class="sf-native-badge-group">',
-            '    <span style="font-size:12px;font-weight:700;color:#64748b">EDITORIAL RECOMMENDATION:</span>',
-            '    <span id="sfBadge" style="display:inline-block;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:800;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">INITIALIZING REAL-TIME AI...</span>',
-            '    <span id="sfCacheTag" style="display:none;font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600"></span>',
-            '  </div>',
-            '  <div style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:12px">',
-            '    <span>Active Submission: <strong>#' + esc(String(sid)) + '</strong></span>',
-            '    <span id="sfDocInfoTag" style="font-size:11px;font-weight:700;color:#4f46e5;background:#eef2ff;padding:2px 8px;border-radius:4px;border:1px solid #c7d2fe">DOCX / HTML View</span>',
-            '  </div>',
-            '</div>',
-            '<div id="sfReport" class="sf-native-report-body">',
-            '  <div style="text-align:center;padding:28px 20px;color:#64748b;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:10px">',
-            '    <div style="font-size:24px">🤖</div>',
-            '    <div>Querying local Ollama LLM (qwen2.5:3b) in real-time for Submission #' + esc(String(sid)) + '...</div>',
-            '  </div>',
-            '</div>',
-            '<div class="sf-native-card-footer" style="padding:14px 20px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;border-radius:0 0 12px 12px;flex-wrap:wrap;gap:10px">',
-            '  <div style="font-size:12px;color:#475569;display:flex;align-items:center;gap:8px">',
-            '    <span style="font-size:16px">📄</span>',
-            '    <span>Ready to evaluate the full submission? Read formatted text, highlight paragraphs, and leave peer review markups.</span>',
-            '  </div>',
-            '  <button id="sfNativeFooterReaderBtn" type="button" class="sf-native-btn sf-native-btn-primary" style="background:#4f46e5;color:#ffffff;border:none;padding:8px 18px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,0.25)">',
-            '    <span>📖 Open In-Screen Manuscript Reader</span>',
-            '    <span>&rarr;</span>',
-            '  </button>',
-            '</div>'
-        ].join('\n');
-
-        if (insertBeforeNode) {
-            mountTarget.insertBefore(card, insertBeforeNode);
-        } else {
-            mountTarget.appendChild(card);
-        }
-
-        // Attach action handlers
-        var reanalyzeBtn = document.getElementById('sfNativeReanalyzeBtn');
-        if (reanalyzeBtn) {
-            reanalyzeBtn.onclick = function(e) {
-                e.preventDefault();
-                runAnalysis(sid, true, 'global');
-            };
-        }
-
-        var openReaderBtnTop = document.getElementById('sfNativeOpenReaderBtn') || document.getElementById('sfNativeToggleReaderBtn');
-        if (openReaderBtnTop) {
-            openReaderBtnTop.onclick = function(e) {
-                e.preventDefault();
-                openInScreenReader(sid);
-            };
-        }
-
-        var openReaderBtnFooter = document.getElementById('sfNativeFooterReaderBtn');
-        if (openReaderBtnFooter) {
-            openReaderBtnFooter.onclick = function(e) {
-                e.preventDefault();
-                openInScreenReader(sid);
-            };
-        }
-
-        // Trigger real-time AI audit fetch
-        currentSubmissionId = String(sid);
-        ensureSelectionPopover();
-        runAnalysis(sid, false, 'global');
+        // Complete clean workflow: No intrusive cards on top of OJS pages on start!
+        var stray = document.getElementById('sfNativeWorkflowCard');
+        if (stray && stray.parentNode) stray.parentNode.removeChild(stray);
     }
 
     // ── Native Dashboard Submissions List AI Badges ───────────────────────
@@ -917,15 +845,14 @@ function injectNativeReviewerMatchmaking(force) {
             legacyBtn.parentNode.removeChild(legacyBtn);
         }
 
-        var sid = getSubmissionId();
-        if (sid && !currentSubmissionId) {
-            currentSubmissionId = String(sid);
+        // Clean up any stray native card from previous versions - NEVER display card on start!
+        var stray = document.getElementById('sfNativeWorkflowCard');
+        if (stray && stray.parentNode) {
+            stray.parentNode.removeChild(stray);
         }
 
-        // Mount native in-page editorial AI panel if on a submission workflow
-        injectNativeWorkflowCard(sid || currentSubmissionId);
-
-        // Inject real-time AI status badges on dashboard submission lists
+        // Inject native workflow and dashboard buttons & badges
+        injectNativeOJSButtons();
         injectNativeDashboardBadges();
     }
 
@@ -1114,7 +1041,7 @@ function injectNativeReviewerMatchmaking(force) {
 
     // ── Open modal ─────────────────────────────────────────────────────────
     // ── Open In-Screen Manuscript Reader ────────────────────────────────────
-    function openInScreenReader(sid) {
+    function openInScreenReader(sid, initialTab) {
         try {
             var urlSid = getExplicitSubmissionIdFromUrl();
             var targetSid = sid || currentSubmissionId || urlSid || '1';
@@ -1140,7 +1067,8 @@ function injectNativeReviewerMatchmaking(force) {
                     subSelect.value = targetSid;
                 }
 
-                __sfSwitchTab('viewer');
+                var tab = initialTab || 'viewer';
+                __sfSwitchTab(tab);
                 loadDocumentViewer(targetSid);
             }
         } catch (err) {
@@ -1863,15 +1791,17 @@ function injectNativeReviewerMatchmaking(force) {
               /* PANEL 2: AI Pre-Screening Analysis */
               '<div id="sfPanelPreScreen" style="display:none;flex:1;overflow-y:auto;padding:28px 36px;background:#f8fafc">',
                 '<div style="max-width:960px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:32px 36px;box-shadow:0 4px 20px rgba(0,0,0,.04)">',
-                  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;background:#f8fafc;padding:16px 20px;border-radius:12px;border:1px solid #e2e8f0">',
+                  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;background:#f8fafc;padding:16px 20px;border-radius:12px;border:1px solid #e2e8f0;flex-wrap:wrap;gap:12px">',
                     '<div>',
                       '<div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:700;letter-spacing:.5px">Editorial Recommendation</div>',
-                      '<span id="sfBadge" style="display:inline-block;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:800;background:#f1f5f9;color:#475569;margin-top:4px">PENDING</span>',
-                      '<span id="sfCacheTag" style="display:none;font-size:11px;margin-left:8px;color:#059669;font-weight:600;background:#dcfce7;padding:3px 8px;border-radius:6px">⚡ Cached (Instant)</span>',
+                      '<span id="sfModalBadge" class="sf-prescreen-badge" style="display:inline-block;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:800;background:#f1f5f9;color:#475569;margin-top:4px;border:1px solid #cbd5e1">INITIALIZING...</span>',
+                      '<span id="sfModalCacheTag" class="sf-prescreen-cache" style="display:none;font-size:11px;margin-left:8px;color:#059669;font-weight:600;background:#dcfce7;padding:3px 8px;border-radius:6px">⚡ Cached (Instant)</span>',
                     '</div>',
-                    '<button onclick="__sfReRunAnalysis()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,.3);transition:background .2s">🔄 Re-Run Full Analysis</button>',
+                    '<button type="button" onclick="window.__sfDirectReRunAnalysis()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,.3);transition:background .2s">🔄 Re-Run Full Analysis</button>',
                   '</div>',
-                  '<div id="sfReport" style="color:#334155;font-size:15px;line-height:1.85"></div>',
+                  '<div id="sfModalReport" class="sf-prescreen-report" style="color:#334155;font-size:15px;line-height:1.85">',
+                    '<div style="text-align:center;padding:40px 20px;color:#64748b;font-size:14px">Loading editorial evaluation...</div>',
+                  '</div>',
                 '</div>',
               '</div>',
 
@@ -1945,9 +1875,21 @@ function injectNativeReviewerMatchmaking(force) {
         if (document.getElementById('sfSelectionPopover')) return;
         var pop = document.createElement('div');
         pop.id = 'sfSelectionPopover';
-        pop.style.display = 'none';
-        pop.style.position = 'fixed';
-        pop.style.zIndex = '2147483648';
+        pop.style.cssText = [
+            'display:none !important',
+            'position:fixed !important',
+            'z-index:2147483648 !important',
+            'background:#ffffff !important',
+            'border:1px solid #cbd5e1 !important',
+            'border-radius:12px !important',
+            'padding:14px 16px !important',
+            'box-shadow:0 16px 40px rgba(0,0,0,0.18),0 2px 8px rgba(0,0,0,0.06) !important',
+            'min-width:300px !important',
+            'max-width:340px !important',
+            'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif !important',
+            'flex-direction:column !important',
+            'gap:10px !important'
+        ].join(';');
         pop.innerHTML = [
             '<div style="font-size:12px;font-weight:700;color:#0f172a;display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">',
             '  <span>Highlight &amp; Add Review Comment</span>',
@@ -2231,6 +2173,7 @@ function injectNativeReviewerMatchmaking(force) {
                 } else {
                     __sfFilterCommentsTab('reviewer');
                 }
+                renderAnnotationsList(cachedAnnotations);
                 if (injectedMark && injectedMark.parentNode) {
                     // Tag the already-injected mark with its server-assigned ID
                     injectedMark.setAttribute('data-aid', data.annotation.id);
@@ -2888,10 +2831,11 @@ function injectNativeReviewerMatchmaking(force) {
         } else if (tabName === 'prescreen') {
             if (btnPre) { btnPre.classList.add('active'); btnPre.style.borderBottomColor = '#4f46e5'; btnPre.style.color = '#4f46e5'; btnPre.style.fontWeight = '700'; }
             if (panelPre) panelPre.style.display = 'block';
-            var r = document.getElementById('sfReport');
-            if (!r || r.innerHTML.trim() === '' || lastEvaluatedSubmissions['prescreen'] !== sid) {
+            var repEl = document.getElementById('sfModalReport') || document.querySelector('.sf-prescreen-report');
+            var isBlank = !repEl || repEl.innerHTML.trim() === '' || repEl.innerHTML.indexOf('Loading editorial') !== -1;
+            if (isBlank || lastEvaluatedSubmissions['prescreen'] !== sid) {
                 lastEvaluatedSubmissions['prescreen'] = sid;
-                runAnalysis(sid, true);
+                runAnalysis(sid, false, 'global');
             }
         } else if (tabName === 'reviewers') {
             if (btnRec) { btnRec.classList.add('active'); btnRec.style.borderBottomColor = '#4f46e5'; btnRec.style.color = '#4f46e5'; btnRec.style.fontWeight = '700'; }
@@ -2899,7 +2843,7 @@ function injectNativeReviewerMatchmaking(force) {
             var rec = document.getElementById('sfReviewers');
             if (!rec || rec.innerHTML.trim() === '' || lastEvaluatedSubmissions['reviewers'] !== sid) {
                 lastEvaluatedSubmissions['reviewers'] = sid;
-                runReviewerRecommendations(sid, true);
+                runReviewerRecommendations(sid, false);
             }
         }
     }
@@ -2907,10 +2851,8 @@ function injectNativeReviewerMatchmaking(force) {
     // ── Fetch AI Report with Cache, Accelerated Execution & Live Percentage Loader ──
     function runAnalysis(sid, forceRefresh, scope) {
         var activeSid = sid || currentSubmissionId || '1';
-        var report = document.getElementById('sfReport');
-        var cacheTag = document.getElementById('sfCacheTag');
-
-        if (cacheTag) cacheTag.style.display = 'none';
+        
+        setCacheTag('', '', '', false);
         setBadge('INITIALIZING...', '#f1f5f9', '#475569', '#cbd5e1');
 
         if (window.__sfPrescreenProgressTimer) {
@@ -2918,56 +2860,57 @@ function injectNativeReviewerMatchmaking(force) {
             window.__sfPrescreenProgressTimer = null;
         }
 
-        if (report) {
-            report.innerHTML = [
-                '<div style="text-align:center;padding:52px 24px;background:#ffffff;border-radius:16px;border:1px solid #e2e8f0;margin-top:12px;box-shadow:0 4px 20px rgba(0,0,0,0.03)">',
-                '  <div style="position:relative;width:96px;height:96px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center">',
-                '    <svg viewBox="0 0 100 100" style="width:100%;height:100%;transform:rotate(-90deg)">',
-                '      <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" stroke-width="7"></circle>',
-                '      <circle id="sfProgressCircle" cx="50" cy="50" r="42" fill="none" stroke="url(#sfGrad)" stroke-width="7" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264" style="transition:stroke-dashoffset 0.4s ease"></circle>',
-                '      <defs>',
-                '        <linearGradient id="sfGrad" x1="0%" y1="0%" x2="100%" y2="100%">',
-                '          <stop offset="0%" stop-color="#4f46e5"></stop>',
-                '          <stop offset="100%" stop-color="#06b6d4"></stop>',
-                '        </linearGradient>',
-                '      </defs>',
-                '    </svg>',
-                '    <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">',
-                '      <span id="sfProgressPercent" style="font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.5px">0%</span>',
-                '    </div>',
-                '  </div>',
-                '  <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.3px">' + (forceRefresh ? 'Evaluating manuscript from scratch with AI model...' : 'AI Pre-Screening Analysis in progress...') + '</div>',
-                '  <div id="sfProgressStep" style="font-size:13px;font-weight:600;color:#4f46e5;margin-top:8px;transition:all 0.3s">Initializing deep manuscript audit...</div>',
-                '  <div style="width:100%;max-width:440px;height:8px;background:#f1f5f9;border-radius:999px;margin:20px auto 14px;overflow:hidden;border:1px solid #e2e8f0;position:relative">',
-                '    <div id="sfProgressBar" style="width:0%;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
-                '  </div>',
-                '  <div style="font-size:12px;color:#64748b;max-width:480px;margin:0 auto">Auditing structure, methodology rigor, and research novelty for Submission #' + esc(activeSid) + '</div>',
-                '</div>'
-            ].join('\n');
-        }
+        var loaderHtml = [
+            '<div style="text-align:center;padding:52px 24px;background:#ffffff;border-radius:16px;border:1px solid #e2e8f0;margin-top:12px;box-shadow:0 4px 20px rgba(0,0,0,0.03)">',
+            '  <div style="position:relative;width:96px;height:96px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center">',
+            '    <svg viewBox="0 0 100 100" style="width:100%;height:100%;transform:rotate(-90deg)">',
+            '      <circle cx="50" cy="50" r="42" fill="none" stroke="#f1f5f9" stroke-width="7"></circle>',
+            '      <circle id="sfProgressCircle" class="sf-progress-circle-dyn" cx="50" cy="50" r="42" fill="none" stroke="url(#sfGrad)" stroke-width="7" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264" style="transition:stroke-dashoffset 0.4s ease"></circle>',
+            '      <defs>',
+            '        <linearGradient id="sfGrad" x1="0%" y1="0%" x2="100%" y2="100%">',
+            '          <stop offset="0%" stop-color="#4f46e5"></stop>',
+            '          <stop offset="100%" stop-color="#06b6d4"></stop>',
+            '        </linearGradient>',
+            '      </defs>',
+            '    </svg>',
+            '    <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">',
+            '      <span id="sfProgressPercent" class="sf-progress-percent-dyn" style="font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.5px">0%</span>',
+            '    </div>',
+            '  </div>',
+            '  <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.3px">' + (forceRefresh ? 'Evaluating manuscript from scratch with AI model...' : 'AI Pre-Screening Analysis in progress...') + '</div>',
+            '  <div id="sfProgressStep" class="sf-progress-step-dyn" style="font-size:13px;font-weight:600;color:#4f46e5;margin-top:8px;transition:all 0.3s">Initializing deep manuscript audit...</div>',
+            '  <div style="width:100%;max-width:440px;height:8px;background:#f1f5f9;border-radius:999px;margin:20px auto 14px;overflow:hidden;border:1px solid #e2e8f0;position:relative">',
+            '    <div id="sfProgressBar" class="sf-progress-bar-dyn" style="width:0%;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
+            '  </div>',
+            '  <div style="font-size:12px;color:#64748b;max-width:480px;margin:0 auto">Auditing structure, methodology rigor, and research novelty for Submission #' + esc(activeSid) + '</div>',
+            '</div>'
+        ].join('\n');
+
+        setReportContent(loaderHtml);
 
         var currentProgress = 0;
         var updateProgress = function(pct, stepText) {
             currentProgress = Math.max(currentProgress, pct);
-            var pctEl = document.getElementById('sfProgressPercent');
-            var barEl = document.getElementById('sfProgressBar');
-            var circleEl = document.getElementById('sfProgressCircle');
-            var stepEl = document.getElementById('sfProgressStep');
-            var badgeEl = document.getElementById('sfBadge');
+            var pcts = document.querySelectorAll('#sfProgressPercent, .sf-progress-percent-dyn');
+            pcts.forEach(function(el) { el.textContent = Math.round(currentProgress) + '%'; });
 
-            if (pctEl) pctEl.textContent = Math.round(currentProgress) + '%';
-            if (barEl) barEl.style.width = Math.min(100, currentProgress) + '%';
-            if (circleEl) {
+            var bars = document.querySelectorAll('#sfProgressBar, .sf-progress-bar-dyn');
+            bars.forEach(function(el) { el.style.width = Math.min(100, currentProgress) + '%'; });
+
+            var circles = document.querySelectorAll('#sfProgressCircle, .sf-progress-circle-dyn');
+            circles.forEach(function(circleEl) {
                 var circumference = 264;
                 var offset = circumference - (currentProgress / 100) * circumference;
                 circleEl.style.strokeDashoffset = Math.max(0, offset);
+            });
+
+            var steps = document.querySelectorAll('#sfProgressStep, .sf-progress-step-dyn');
+            if (stepText) {
+                steps.forEach(function(el) { el.textContent = stepText; });
             }
-            if (stepText && stepEl) stepEl.textContent = stepText;
-            if (badgeEl && currentProgress < 100) {
-                badgeEl.textContent = 'ANALYZING (' + Math.round(currentProgress) + '%)';
-                badgeEl.style.background = '#eef2ff';
-                badgeEl.style.color = '#4338ca';
-                badgeEl.style.borderColor = '#c7d2fe';
+
+            if (currentProgress < 100) {
+                setBadge('ANALYZING (' + Math.round(currentProgress) + '%)', '#eef2ff', '#4338ca', '#c7d2fe');
             }
         };
 
@@ -3022,23 +2965,12 @@ function injectNativeReviewerMatchmaking(force) {
                 if (data && data.report) {
                     updateProgress(100, 'Analysis complete! Rendering editorial report...');
                     setTimeout(function() {
-                        if (cacheTag) {
-                            if (data.is_private) {
-                                cacheTag.textContent = '🔒 Private Session Draft';
-                                cacheTag.style.background = '#f3e8ff';
-                                cacheTag.style.color = '#7e22ce';
-                                cacheTag.style.display = 'inline-block';
-                            } else if (data.cached) {
-                                cacheTag.textContent = '⚡ Cached (Instant)';
-                                cacheTag.style.background = '#dcfce7';
-                                cacheTag.style.color = '#059669';
-                                cacheTag.style.display = 'inline-block';
-                            } else {
-                                cacheTag.textContent = '🤖 Fresh AI Evaluation Generated';
-                                cacheTag.style.background = '#eef2ff';
-                                cacheTag.style.color = '#4338ca';
-                                cacheTag.style.display = 'inline-block';
-                            }
+                        if (data.is_private) {
+                            setCacheTag('🔒 Private Session Draft', '#f3e8ff', '#7e22ce', true);
+                        } else if (data.cached) {
+                            setCacheTag('⚡ Cached (Instant)', '#dcfce7', '#059669', true);
+                        } else {
+                            setCacheTag('🤖 Fresh AI Evaluation Generated', '#eef2ff', '#4338ca', true);
                         }
                         showReport(data.report);
                     }, 350);
@@ -3302,16 +3234,12 @@ function injectNativeReviewerMatchmaking(force) {
         } else {
             setBadge('REVISIONS REQUIRED', '#fef3c7', '#b45309', '#fde68a');
         }
-        var report = document.getElementById('sfReport');
-        if (report) report.innerHTML = mdToHtml(md);
+        setReportContent(mdToHtml(md));
     }
 
     function showError(msg) {
         setBadge('ERROR', '#fee2e2', '#b91c1c', '#fca5a5');
-        var report = document.getElementById('sfReport');
-        if (report) {
-            report.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:20px;color:#b91c1c"><strong>Analysis Failed:</strong> ' + esc(msg) + '</div>';
-        }
+        setReportContent('<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:20px;color:#b91c1c"><strong>Analysis Failed:</strong> ' + esc(msg) + '</div>');
     }
 
     // ── Comment Tabs Filtering ─────────────────────────────────────────────
@@ -3644,16 +3572,39 @@ function injectNativeReviewerMatchmaking(force) {
     };
 
     function setBadge(text, bg, color, border) {
-        var badge = document.getElementById('sfBadge');
-        if (!badge) return;
-        badge.textContent = text;
-        badge.style.cssText = [
-            'display:inline-block', 'padding:6px 14px', 'border-radius:8px',
-            'font-size:12px', 'font-weight:800',
-            'background:' + (bg || '#f1f5f9'),
-            'color:' + (color || '#475569'),
-            'border:1px solid ' + (border || '#cbd5e1')
-        ].join(';');
+        var targets = document.querySelectorAll('#sfModalBadge, #sfBadge, .sf-prescreen-badge');
+        targets.forEach(function(badge) {
+            badge.textContent = text;
+            badge.style.display = 'inline-block';
+            badge.style.padding = '6px 14px';
+            badge.style.borderRadius = '8px';
+            badge.style.fontSize = '12px';
+            badge.style.fontWeight = '800';
+            badge.style.background = bg || '#f1f5f9';
+            badge.style.color = color || '#475569';
+            badge.style.border = '1px solid ' + (border || '#cbd5e1');
+        });
+    }
+
+    function setReportContent(html) {
+        var targets = document.querySelectorAll('#sfModalReport, #sfReport, .sf-prescreen-report');
+        targets.forEach(function(el) {
+            el.innerHTML = html;
+        });
+    }
+
+    function setCacheTag(text, bg, color, isVisible) {
+        var targets = document.querySelectorAll('#sfModalCacheTag, #sfCacheTag, .sf-prescreen-cache');
+        targets.forEach(function(el) {
+            if (!isVisible) {
+                el.style.display = 'none';
+            } else {
+                el.textContent = text;
+                el.style.background = bg || '#dcfce7';
+                el.style.color = color || '#059669';
+                el.style.display = 'inline-block';
+            }
+        });
     }
 
     function mdToHtml(md) {
