@@ -342,3 +342,176 @@ body.sf-resizing canvas {
     to { opacity: 1; transform: translateY(0); }
 }
 
+
+/* ==========================================================================
+   ScholarFlow Native OJS In-Page Merged Workflow Integration
+   ========================================================================== */
+
+/* 1. Permanently Hide Separate Floating Trigger Bubble */
+#sfTriggerBtn {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+/* 2. Native Workflow AI Pre-Screening & Quality Card */
+.sf-native-workflow-card {
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-left: 4px solid #4f46e5 !important;
+    border-radius: 12px !important;
+    margin: 16px 0 24px 0 !important;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04) !important;
+    overflow: hidden !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    animation: sfFadeSlideIn 0.3s ease-out;
+}
+
+.sf-native-card-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 16px 20px !important;
+    background: linear-gradient(135deg, #f8fafc, #f1f5f9) !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+}
+
+.sf-native-header-title {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+}
+
+.sf-native-ai-tag {
+    background: #4f46e5 !important;
+    color: #ffffff !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    padding: 3px 8px !important;
+    border-radius: 6px !important;
+    letter-spacing: 0.5px !important;
+}
+
+.sf-native-model-tag {
+    background: #eff6ff !important;
+    color: #1d4ed8 !important;
+    border: 1px solid #bfdbfe !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    padding: 3px 10px !important;
+    border-radius: 20px !important;
+}
+
+.sf-native-header-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+
+.sf-native-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    padding: 7px 14px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    transition: all 0.2s ease !important;
+}
+
+.sf-native-btn-primary {
+    background: #4f46e5 !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 1px 3px rgba(79, 70, 229, 0.3) !important;
+}
+
+.sf-native-btn-primary:hover {
+    background: #4338ca !important;
+}
+
+.sf-native-btn-secondary {
+    background: #ffffff !important;
+    color: #334155 !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+.sf-native-btn-secondary:hover {
+    background: #f8fafc !important;
+    border-color: #94a3b8 !important;
+}
+
+.sf-native-summary-strip {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 12px 20px !important;
+    background: #ffffff !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+}
+
+.sf-native-badge-group {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+
+.sf-native-report-body {
+    padding: 24px !important;
+    background: #ffffff !important;
+    color: #334155 !important;
+    font-size: 14px !important;
+    line-height: 1.75 !important;
+}
+
+.sf-native-report-body h3 {
+    font-size: 15px !important;
+    font-weight: 800 !important;
+    color: #0f172a !important;
+    margin: 18px 0 8px 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    padding-bottom: 6px !important;
+}
+
+.sf-native-report-body h3:first-child {
+    margin-top: 0 !important;
+}
+
+/* 3. Inline Expandable Manuscript Document Reader */
+.sf-native-inline-reader {
+    border-top: 1px solid #e2e8f0 !important;
+    background: #f8fafc !important;
+    height: 650px !important;
+    display: flex !important;
+    overflow: hidden !important;
+    position: relative !important;
+}
+
+/* 4. Dashboard Submission Row AI Badges */
+.sf-dash-ai-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    padding: 2px 8px !important;
+    border-radius: 12px !important;
+    background: #eef2ff !important;
+    color: #4338ca !important;
+    border: 1px solid #c7d2fe !important;
+    margin-left: 8px !important;
+    vertical-align: middle !important;
+    white-space: nowrap !important;
+}
+
+.sf-dash-ai-badge:hover {
+    background: #e0e7ff !important;
+}

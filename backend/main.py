@@ -631,7 +631,7 @@ MANUSCRIPT TEXT:
 """
 
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 OLLAMA_URL,
                 json={
@@ -674,30 +674,10 @@ MANUSCRIPT TEXT:
                 "is_private": is_private
             }
             
-    except (httpx.TimeoutException, httpx.ReadTimeout):
-        fallback_report = generate_fallback_prescreening(extracted_text)
-        return {
-            "success": True,
-            "file_path": file_path,
-            "model": "fallback_heuristics",
-            "report": fallback_report,
-            "cached": False,
-            "fallback": True,
-            "is_private": is_private
-        }
+    except HTTPException:
+        raise
     except Exception as e:
-        if 'extracted_text' in locals() and extracted_text:
-            fallback_report = generate_fallback_prescreening(extracted_text)
-            return {
-                "success": True,
-                "file_path": file_path,
-                "model": "fallback_heuristics",
-                "report": fallback_report,
-                "cached": False,
-                "fallback": True,
-                "is_private": is_private
-            }
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e) or type(e).__name__}")
+        raise HTTPException(status_code=502, detail=f"Real-time Ollama LLM execution failed: {str(e)}")
 
 
 class ReviewerItem(BaseModel):
