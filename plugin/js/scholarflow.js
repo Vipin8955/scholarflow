@@ -92,6 +92,10 @@
 
     // ── Get submissionId from multiple sources ─────────────────────────────
     function getSubmissionId() {
+        if (window.__sfActiveAssignSubmissionId) {
+            return String(window.__sfActiveAssignSubmissionId);
+        }
+
         var href = window.location.href;
 
         var rm = href.match(/\/reviewer\/(?:submission|step)\/(\d+)/);
@@ -103,8 +107,8 @@
         var sm = href.match(/[?&]submissionId=(\d+)/);
         if (sm) return sm[1];
 
-        m = href.match(/\/workflow\/index\/(\d+)/);
-        if (m) return m[1];
+        var wm = href.match(/\/workflow\/(?:index|access)\/(\d+)/);
+        if (wm) return wm[1];
 
         var subInput = document.querySelector('input[name="submissionId"]');
         if (subInput && subInput.value) return subInput.value;
@@ -261,7 +265,9 @@
             readerBtn.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                window.__sfOpenInScreenReader(sid || currentSubmissionId || '1', 'viewer');
+                e.stopImmediatePropagation();
+                var activeSid = getActiveReviewerModalSubmissionId() || sid || currentSubmissionId || '1';
+                window.__sfOpenInScreenReader(activeSid, 'viewer');
             };
 
             var aiBtn = document.createElement('button');
@@ -287,7 +293,9 @@
             aiBtn.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                window.__sfOpenInScreenReader(sid || currentSubmissionId || '1', 'prescreen');
+                e.stopImmediatePropagation();
+                var activeSid = getActiveReviewerModalSubmissionId() || sid || currentSubmissionId || '1';
+                window.__sfOpenInScreenReader(activeSid, 'prescreen');
             };
 
             actionsWrap.appendChild(readerBtn);
@@ -351,6 +359,10 @@
     function getActiveReviewerModalSubmissionId() {
         if (window.__sfActiveAssignSubmissionId) {
             return String(window.__sfActiveAssignSubmissionId);
+        }
+        var explicitSid = getExplicitSubmissionIdFromUrl();
+        if (explicitSid) {
+            return String(explicitSid);
         }
         // Match author string in modal against cachedSubmissionsList
         var modalEl = document.querySelector('.pkpListPanel--selectReviewer, [class*="selectReviewer"], .pkp_modal');
@@ -1125,15 +1137,18 @@ function injectNativeReviewerMatchmaking(force) {
         hideSelectionPopover();
     }
 
-    // Dismiss in-screen reader on Escape key press
+    // Dismiss in-screen reader on Escape key press with capture phase to protect underlying OJS modals
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' || e.key === 'Esc') {
             var overlay = document.getElementById('sfOverlay');
             if (overlay && overlay.style.display !== 'none') {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
                 sfClose();
             }
         }
-    });
+    }, true);
 
     // ── Toggle Fullscreen / Windowed Mode ──────────────────────────────────
     function toggleWindowMode() {
@@ -1168,7 +1183,7 @@ function injectNativeReviewerMatchmaking(force) {
         var m = href.match(/\/reviewer\/(?:submission|step)\/(\d+)/) ||
                 href.match(/[?&]workflowSubmissionId=(\d+)/) ||
                 href.match(/[?&]submissionId=(\d+)/) ||
-                href.match(/\/workflow\/index\/(\d+)/);
+                href.match(/\/workflow\/(?:index|access)\/(\d+)/);
         return m ? m[1] : null;
     }
 
@@ -1709,7 +1724,7 @@ function injectNativeReviewerMatchmaking(force) {
                   '<button onclick="__sfOpenPaperPickerModal()" title="Browse all papers in journal" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(0,0,0,0.2);transition:background 0.2s">📚 Browse</button>',
                 '</div>',
                 '<button id="sfToggleSizeBtn" onclick="__sfToggleMode()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:6px 12px;cursor:pointer;color:#ffffff;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">🗗 Windowed</button>',
-                '<button onclick="__sfClose()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);',
+                '<button type="button" onclick="event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); __sfClose();" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);',
                 'border-radius:8px;width:34px;height:34px;cursor:pointer;color:#ffffff;',
                 'font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;transition:background 0.2s">',
                 '&times;</button>',
@@ -1853,11 +1868,20 @@ function injectNativeReviewerMatchmaking(force) {
         ].join('');
 
         wrap.addEventListener('click', function (e) {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
             if (e.target === wrap) {
-                e.stopPropagation();
                 sfClose();
             }
-        });
+        }, true);
+        wrap.addEventListener('mousedown', function (e) {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        }, true);
+        wrap.addEventListener('mouseup', function (e) {
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        }, true);
 
         document.body.appendChild(wrap);
         initSplitterResize();
