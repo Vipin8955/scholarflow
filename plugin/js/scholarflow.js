@@ -186,11 +186,21 @@
         if (window.MutationObserver && !window.__sfObserverInitialized) {
             window.__sfObserverInitialized = true;
             try {
+                var sfObserverTimer = null;
                 var observer = new MutationObserver(function () {
-                    injectNativeOJSButtons();
-                    autoPrefetchOpenSubmissionMatchmaking();
-                    injectNativeReviewerMatchmaking();
-                    simplifyOjsUi();
+                    if (sfObserverTimer) return;
+                    sfObserverTimer = setTimeout(function () {
+                        sfObserverTimer = null;
+                        try { observer.disconnect(); } catch (_) {}
+                        try {
+                            injectNativeOJSButtons();
+                            autoPrefetchOpenSubmissionMatchmaking();
+                            injectNativeReviewerMatchmaking();
+                            simplifyOjsUi();
+                        } finally {
+                            try { observer.observe(document.body, { childList: true, subtree: true }); } catch (_) {}
+                        }
+                    }, 60);
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
             } catch (_) {}
@@ -786,7 +796,11 @@ function injectNativeReviewerMatchmaking(force) {
             var stDone = window.__sfMatchmakingJobState[sid] || {};
             var subDoneEl = document.getElementById('sfNativeMatchStatus');
             if (subDoneEl) {
-                subDoneEl.innerHTML = '✅ Ready — Pre-evaluated by <strong>' + esc(stDone.model || window.__sfActiveModelName || 'Ollama LLM') + '</strong>' + (stDone.cached ? ' (cached)' : '') + '. Click <strong>Select Reviewer</strong> to assign.';
+                var doneKey = String(sid) + '|' + (stDone.model || window.__sfActiveModelName || 'Ollama LLM') + '|' + (stDone.cached ? '1' : '0');
+                if (subDoneEl.getAttribute('data-sf-status-key') !== doneKey) {
+                    subDoneEl.setAttribute('data-sf-status-key', doneKey);
+                    subDoneEl.innerHTML = '✅ Ready — Pre-evaluated by <strong>' + esc(stDone.model || window.__sfActiveModelName || 'Ollama LLM') + '</strong>' + (stDone.cached ? ' (cached)' : '') + '. Click <strong>Select Reviewer</strong> to assign.';
+                }
             }
             applyReviewerMatchesToDom(reviewerItems, window.__sfMatchmakingCache[sid]);
             if (reviewerPanel.getAttribute('data-sf-sorted-sid') !== String(sid)) {
@@ -823,7 +837,10 @@ function injectNativeReviewerMatchmaking(force) {
         // If already pre-fetching in background from paper open, just attach UI updates cleanly
         if (window.__sfMatchmakingLoading[sid] && !force) {
             var subRunEl = document.getElementById('sfNativeMatchStatus');
-            if (subRunEl) subRunEl.textContent = '⏳ ' + (jobState.percent || 5) + '% — ' + (jobState.stage || 'Evaluating candidates with LLM...');
+            var nextRunText = '⏳ ' + (jobState.percent || 5) + '% — ' + (jobState.stage || 'Evaluating candidates with LLM...');
+            if (subRunEl && subRunEl.textContent !== nextRunText) {
+                subRunEl.textContent = nextRunText;
+            }
             return;
         }
 
@@ -985,6 +1002,14 @@ function injectNativeReviewerMatchmaking(force) {
             var scoreB = parseInt(b.getAttribute('data-sf-match-score') || '0', 10);
             return scoreB - scoreA;
         });
+
+        var currentOrder = Array.prototype.slice.call(itemsList.children).filter(function(el) {
+            return el.tagName === 'LI';
+        });
+        var alreadySorted = items.length === currentOrder.length && items.every(function(item, idx) {
+            return currentOrder[idx] === item;
+        });
+        if (alreadySorted) return;
 
         items.forEach(function(item) {
             itemsList.appendChild(item);
@@ -1297,17 +1322,67 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
     // ── Open modal ─────────────────────────────────────────────────────────
+    // ── Protect underlying OJS SideModals (Reka UI DismissableLayer) ───────
+    function isInsideScholarFlowUi(node) {
+        if (!node || !node.closest) return false;
+        return !!node.closest('#sfOverlay, #sfSelectionPopover, #sfNativeWorkflowActions');
+    }
+
+    function installOjsModalDismissGuard() {
+        if (window.__sfDismissGuardInitialized) return;
+        window.__sfDismissGuardInitialized = true;
+        ['dismissableLayer.pointerDownOutside', 'dismissableLayer.focusOutside'].forEach(function (evtName) {
+            document.addEventListener(evtName, function (e) {
+                var origTarget = e && e.detail && e.detail.originalEvent && e.detail.originalEvent.target;
+                var recentlyClosed = (Date.now() - (window.__sfClosingTimestamp || 0)) < 350;
+                if (window.__sfModalOpen || recentlyClosed || isInsideScholarFlowUi(origTarget)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, true);
+        });
+    }
+
+    function isolateOverlayElement(el, onMouseUpExtra) {
+        if (!el || el.__sfIsolated) return;
+        el.__sfIsolated = true;
+        el.setAttribute('data-dismissable-layer', '');
+        ['pointerdown', 'pointerup', 'pointercancel', 'mousedown', 'touchstart', 'touchend', 'focusin', 'focusout'].forEach(function (evtName) {
+            el.addEventListener(evtName, function (e) {
+                e.stopPropagation();
+            }, false);
+        });
+        el.addEventListener('mouseup', function (e) {
+            if (typeof onMouseUpExtra === 'function') onMouseUpExtra(e);
+            e.stopPropagation();
+        }, false);
+        el.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (el.id === 'sfOverlay' && e.target === el) {
+                sfClose();
+            }
+        }, false);
+    }
+
     // ── Open In-Screen Manuscript Reader ────────────────────────────────────
     function openInScreenReader(sid, initialTab) {
         try {
+            installOjsModalDismissGuard();
             var urlSid = getExplicitSubmissionIdFromUrl();
             var targetSid = sid || currentSubmissionId || urlSid || '1';
             currentSubmissionId = String(targetSid);
+
+            if (document.activeElement && document.activeElement !== document.body && !isInsideScholarFlowUi(document.activeElement)) {
+                window.__sfLastFocusedBeforeOverlay = document.activeElement;
+            }
 
             var overlay = document.getElementById('sfOverlay');
             if (!overlay) {
                 buildModal(targetSid);
                 overlay = document.getElementById('sfOverlay');
+            } else if (overlay.parentNode === document.body && document.body.lastElementChild !== overlay) {
+                // Keep #sfOverlay after any dynamically portaled OJS SideModals in DOM order
+                document.body.appendChild(overlay);
             }
             if (cachedSubmissionsList && cachedSubmissionsList.length > 0) {
                 updateSubmissionSelect();
@@ -1316,6 +1391,7 @@ function injectNativeReviewerMatchmaking(force) {
             if (overlay) {
                 overlay.style.display = 'flex';
                 window.__sfModalOpen = true;
+                window.__sfClosingTimestamp = 0;
                 document.body.style.overflow = 'hidden';
 
                 ensureSelectionPopover();
@@ -1461,6 +1537,7 @@ function injectNativeReviewerMatchmaking(force) {
 
     // ── Close modal ────────────────────────────────────────────────────────
     function sfClose() {
+        window.__sfClosingTimestamp = Date.now();
         window.__sfModalOpen = false;
         var overlay = document.getElementById('sfOverlay');
         if (overlay) {
@@ -1471,6 +1548,25 @@ function injectNativeReviewerMatchmaking(force) {
         var blocker = document.getElementById('sfResizeBlocker');
         if (blocker) blocker.remove();
         hideSelectionPopover();
+
+        var restoreTarget = window.__sfLastFocusedBeforeOverlay;
+        window.__sfLastFocusedBeforeOverlay = null;
+        setTimeout(function () {
+            try {
+                if (restoreTarget && document.contains(restoreTarget) && typeof restoreTarget.focus === 'function') {
+                    restoreTarget.focus({ preventScroll: true });
+                    return;
+                }
+                var dialogs = document.querySelectorAll('[role="dialog"]:not(#sfOverlay), .pkp_modal_panel');
+                var topDialog = dialogs.length ? dialogs[dialogs.length - 1] : null;
+                if (topDialog) {
+                    var focusEl = topDialog.querySelector('button, input, select, [tabindex]') || topDialog;
+                    if (focusEl && typeof focusEl.focus === 'function') {
+                        focusEl.focus({ preventScroll: true });
+                    }
+                }
+            } catch (_) {}
+        }, 0);
     }
 
     // Dismiss in-screen reader on Escape key press with capture phase to protect underlying OJS modals
@@ -2206,21 +2302,11 @@ function injectNativeReviewerMatchmaking(force) {
             '</style>'
         ].join('');
 
-        wrap.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (e.target === wrap) {
-                sfClose();
-            }
-        }, false);
-        wrap.addEventListener('mousedown', function (e) {
-            e.stopPropagation();
-        }, false);
-        wrap.addEventListener('mouseup', function (e) {
+        isolateOverlayElement(wrap, function (e) {
             if (typeof handleDocMouseUp === 'function') {
                 handleDocMouseUp(e);
             }
-            e.stopPropagation();
-        }, false);
+        });
 
         document.body.appendChild(wrap);
         initSplitterResize();
@@ -2277,9 +2363,7 @@ function injectNativeReviewerMatchmaking(force) {
             '  <button type="button" onclick="__sfSaveAnnotation()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
             '</div>'
         ].join('\n');
-        pop.addEventListener('click', function (e) { e.stopPropagation(); }, false);
-        pop.addEventListener('mousedown', function (e) { e.stopPropagation(); }, false);
-        pop.addEventListener('mouseup', function (e) { e.stopPropagation(); }, false);
+        isolateOverlayElement(pop);
         document.body.appendChild(pop);
     }
 
