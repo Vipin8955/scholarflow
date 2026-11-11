@@ -89,6 +89,9 @@
     var selectedHighlightColor = 'yellow';
     var isFullscreen = true;
     var lastEvaluatedSubmissions = {};
+    var cachedSubmissionsList = [];
+    var sidebarVisible = true;
+    var sidebarRatio = 32;
 
     // ── Get submissionId from multiple sources ─────────────────────────────
     function getSubmissionId() {
@@ -166,13 +169,16 @@
     function init() {
         ensureButton();
         fetchUserInfo();
+        fetchBackendHealth();
         fetchSubmissionsList();
         injectNativeOJSButtons();
+        autoPrefetchOpenSubmissionMatchmaking();
         injectNativeReviewerMatchmaking();
         simplifyOjsUi();
         setInterval(function () {
             ensureButton();
             injectNativeOJSButtons();
+            autoPrefetchOpenSubmissionMatchmaking();
             injectNativeReviewerMatchmaking();
             simplifyOjsUi();
         }, 800);
@@ -182,6 +188,7 @@
             try {
                 var observer = new MutationObserver(function () {
                     injectNativeOJSButtons();
+                    autoPrefetchOpenSubmissionMatchmaking();
                     injectNativeReviewerMatchmaking();
                     simplifyOjsUi();
                 });
@@ -358,6 +365,158 @@
     // ── Native OJS Reviewer Matchmaking Integration ───────────────────────
     window.__sfMatchmakingCache = window.__sfMatchmakingCache || {};
     window.__sfMatchmakingLoading = window.__sfMatchmakingLoading || {};
+    window.__sfMatchmakingJobState = window.__sfMatchmakingJobState || {};
+
+    function detectOpenedSubmissionForPrefetch() {
+        if (!currentUserInfo || !currentUserInfo.isEditor) return null;
+        if (window.__sfActiveAssignSubmissionId) {
+            return String(window.__sfActiveAssignSubmissionId);
+        }
+        var href = window.location.href;
+        var m = href.match(/[?&]workflowSubmissionId=(\d+)/) ||
+                href.match(/[?&]submissionId=(\d+)/) ||
+                href.match(/\/workflow\/(?:index|access)\/(\d+)/);
+        return m ? String(m[1]) : null;
+    }
+
+    function autoPrefetchOpenSubmissionMatchmaking() {
+        var sid = detectOpenedPaperSafely();
+        if (!sid) return;
+        if (window.__sfMatchmakingCache[sid] || window.__sfMatchmakingLoading[sid]) return;
+        var st = window.__sfMatchmakingJobState[sid];
+        if (st && st.error) return;
+        startReviewerMatchmakingJob(sid, false);
+    }
+
+    function detectOpenedPaperSafely() {
+        return detectOpenedSubmissionForPrefetch();
+    }
+
+    function getActiveReviewerDomContext() {
+        var reviewerPanel = document.querySelector(
+            '.listPanel--selectReviewer, .pkpListPanel--selectReviewer, [class*="selectReviewer"], .pkpSelectReviewerListPanel'
+        );
+        if (!reviewerPanel) {
+            var openModal = document.querySelector('.pkp_modal_panel, .ui-dialog, [role="dialog"]');
+            if (openModal) {
+                var modalTitle = openModal.querySelector('.ui-dialog-title, .pkp_modal_title, h2, h1');
+                var titleText = modalTitle ? (modalTitle.textContent || '').toLowerCase() : '';
+                if (titleText.indexOf('reviewer') !== -1) {
+                    reviewerPanel = openModal.querySelector('.listPanel, .pkpListPanel');
+                }
+            }
+        }
+        if (!reviewerPanel) return null;
+        var itemsList = reviewerPanel.querySelector('.listPanel__itemsList, .listPanel__items, .pkpListPanel__items, ul');
+        if (!itemsList) {
+            var anyItem = document.querySelector('.listPanel__item--reviewer, .pkpListPanelItem--selectReviewer');
+            if (anyItem) itemsList = anyItem.closest('ul, .listPanel__itemsList, .listPanel__items') || anyItem.parentElement;
+        }
+        var reviewerItems = itemsList ? itemsList.querySelectorAll('li.listPanel__item, li.pkpListPanelItem') : [];
+        return { reviewerPanel: reviewerPanel, itemsList: itemsList, reviewerItems: reviewerItems };
+    }
+
+    function startReviewerMatchmakingJob(sid, force) {
+        if (!sid) return;
+        if (!force && (window.__sfMatchmakingCache[sid] || window.__sfMatchmakingLoading[sid])) return;
+
+        window.__sfMatchmakingLoading[sid] = true;
+        window.__sfMatchmakingJobState[sid] = {
+            percent: 5,
+            stage: 'Starting background LLM reviewer audit for Submission #' + sid + '...',
+            error: null
+        };
+
+        var statusSub = document.getElementById('sfNativeMatchStatus');
+        if (statusSub) statusSub.textContent = 'Connecting to Ollama LLM for real-time reviewer compatibility audit...';
+
+        var url = getContextBase() + '/scholarflow/recommendReviewers?submissionId=' + sid + '&async=1' + (force ? '&force_refresh=1' : '');
+        fetch(url, { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(startData) {
+                if (startData && startData.job_id) {
+                    pollScholarFlowJob(startData.job_id, function(job) {
+                        var pct = job.percent || 0;
+                        var stg = job.stage || 'Evaluating candidates with LLM...';
+                        window.__sfMatchmakingJobState[sid] = { percent: pct, stage: stg, error: null };
+
+                        var activeCtx = getActiveReviewerDomContext();
+                        if (activeCtx && String(getActiveReviewerModalSubmissionId()) === String(sid)) {
+                            var subEl = document.getElementById('sfNativeMatchStatus');
+                            if (subEl) subEl.textContent = '⏳ ' + pct + '% — ' + stg;
+                            activeCtx.reviewerItems.forEach(function(li) {
+                                var lb = li.querySelector('.sf-ojs-loading-badge');
+                                if (lb) lb.innerHTML = '🤖 ' + pct + '% LLM...';
+                            });
+                        }
+                    }, function(resultData) {
+                        window.__sfMatchmakingLoading[sid] = false;
+                        var mdl = (resultData && resultData.model) || window.__sfActiveModelName || 'Ollama LLM';
+                        var isCached = !!(resultData && resultData.cached);
+                        var recs = (resultData && resultData.recommendations) ? resultData.recommendations : [];
+                        var meta = (startData && startData.candidateMeta) ? startData.candidateMeta : {};
+                        recs.forEach(function(rc) {
+                            if (meta[rc.id]) {
+                                rc.active_reviews = meta[rc.id].active_reviews;
+                                rc.completed_reviews = meta[rc.id].completed_reviews;
+                            }
+                        });
+                        window.__sfMatchmakingCache[sid] = recs;
+                        window.__sfMatchmakingJobState[sid] = { percent: 100, stage: 'Complete', model: mdl, cached: isCached, error: null };
+
+                        var activeCtx = getActiveReviewerDomContext();
+                        if (activeCtx && String(getActiveReviewerModalSubmissionId()) === String(sid)) {
+                            var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
+                            if (reanalyzeBtn) { reanalyzeBtn.innerHTML = '🔄 Refresh AI'; reanalyzeBtn.disabled = false; }
+                            var subEl = document.getElementById('sfNativeMatchStatus');
+                            if (subEl) subEl.innerHTML = '✅ Evaluated by <strong>' + esc(mdl) + '</strong>' + (isCached ? ' (cached)' : '') + '. Click <strong>Select Reviewer</strong> to assign.';
+                            applyReviewerMatchesToDom(activeCtx.reviewerItems, recs);
+                            sortReviewersByMatchScore(activeCtx.itemsList);
+                            activeCtx.reviewerPanel.setAttribute('data-sf-sorted-sid', String(sid));
+                        }
+                    }, function(errMsg) {
+                        window.__sfMatchmakingLoading[sid] = false;
+                        window.__sfMatchmakingJobState[sid] = { percent: 0, stage: 'Error', error: errMsg };
+                        var activeCtx = getActiveReviewerDomContext();
+                        if (activeCtx && String(getActiveReviewerModalSubmissionId()) === String(sid)) {
+                            var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
+                            if (reanalyzeBtn) { reanalyzeBtn.innerHTML = '🔄 Refresh AI'; reanalyzeBtn.disabled = false; }
+                            var subEl = document.getElementById('sfNativeMatchStatus');
+                            if (subEl) subEl.innerHTML = '<span style="color:#b91c1c;font-weight:700">⚠️ LLM Matchmaking Error: ' + esc(errMsg) + '</span>';
+                            activeCtx.reviewerItems.forEach(function(li) {
+                                var lb = li.querySelector('.sf-ojs-loading-badge');
+                                if (lb) lb.innerHTML = '⚠️ LLM Error';
+                            });
+                        }
+                    });
+                } else {
+                    window.__sfMatchmakingLoading[sid] = false;
+                    var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
+                    if (reanalyzeBtn) { reanalyzeBtn.innerHTML = '🔄 Refresh AI'; reanalyzeBtn.disabled = false; }
+                    if (startData && startData.recommendations) {
+                        window.__sfMatchmakingCache[sid] = startData.recommendations;
+                        window.__sfMatchmakingJobState[sid] = { percent: 100, stage: 'Complete', model: startData.model || 'Ollama LLM', error: null };
+                        var activeCtx = getActiveReviewerDomContext();
+                        if (activeCtx && String(getActiveReviewerModalSubmissionId()) === String(sid)) {
+                            applyReviewerMatchesToDom(activeCtx.reviewerItems, startData.recommendations);
+                            sortReviewersByMatchScore(activeCtx.itemsList);
+                            activeCtx.reviewerPanel.setAttribute('data-sf-sorted-sid', String(sid));
+                        }
+                    } else if (startData && startData.error) {
+                        window.__sfMatchmakingJobState[sid] = { percent: 0, stage: 'Error', error: startData.error };
+                        var subEl = document.getElementById('sfNativeMatchStatus');
+                        if (subEl) subEl.innerHTML = '<span style="color:#b91c1c;font-weight:700">⚠️ ' + esc(startData.error) + '</span>';
+                    }
+                }
+            })
+            .catch(function(err) {
+                window.__sfMatchmakingLoading[sid] = false;
+                window.__sfMatchmakingJobState[sid] = { percent: 0, stage: 'Error', error: err.message };
+                var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
+                if (reanalyzeBtn) { reanalyzeBtn.innerHTML = '🔄 Refresh AI'; reanalyzeBtn.disabled = false; }
+                console.error('ScholarFlow native reviewer matchmaking error:', err);
+            });
+    }
 
     function getActiveReviewerModalSubmissionId() {
         if (window.__sfActiveAssignSubmissionId) {
@@ -412,17 +571,20 @@
         if (stray && stray.parentNode) stray.parentNode.removeChild(stray);
     }
 
-    // ── Native Dashboard Submissions List AI Badges ───────────────────────
+    // ── Native Dashboard Submissions List AI Badges (Real LLM Cache State) ─
+    var _sfDashboardStatusCache = {};
+    var _sfDashboardStatusFetching = false;
+
     function injectNativeDashboardBadges() {
         var items = document.querySelectorAll(
             '.submissionsListPanel li.listPanel__item, .pkpListPanelItem, tr.pkpTable__row, .listPanel__item'
         );
         if (!items || items.length === 0) return;
 
-        items.forEach(function(item) {
-            if (item.querySelector('.sf-dash-ai-badge')) return;
+        var pendingIds = [];
+        var rowsToUpdate = [];
 
-            // Extract submission ID from link or row
+        items.forEach(function(item) {
             var link = item.querySelector('a[href*="workflowSubmissionId"], a[href*="/workflow/index/"], a[href*="/workflow/access/"], a[href*="/submission/"]');
             var subId = null;
             if (link && link.href) {
@@ -437,20 +599,70 @@
             }
             if (!subId) return;
 
+            if (!_sfDashboardStatusCache[subId] && pendingIds.indexOf(subId) === -1) {
+                pendingIds.push(subId);
+            }
+            rowsToUpdate.push({ item: item, subId: subId });
+        });
+
+        function renderBadgeForRow(item, subId, st) {
             var titleEl = item.querySelector('.listPanel__itemTitle, .pkpListPanelItem__title, [class*="itemTitle"], td.pkpTable__cell--title, h4, h3');
-            if (titleEl) {
-                var badge = document.createElement('span');
+            if (!titleEl) return;
+            var badge = item.querySelector('.sf-dash-ai-badge');
+            if (!badge) {
+                badge = document.createElement('span');
                 badge.className = 'sf-dash-ai-badge';
-                badge.innerHTML = '🤖 AI Pre-Screened: <strong>Active Audit</strong>';
-                badge.title = 'Click to open submission editorial workflow with ScholarFlow AI Quality Audit';
                 badge.style.cursor = 'pointer';
-                badge.onclick = function(e) {
-                    e.stopPropagation();
-                    window.location.href = getContextBase() + '/workflow/access/' + subId;
-                };
                 titleEl.appendChild(badge);
             }
+            var verdict = st && st.verdict ? st.verdict : 'NOT SCREENED';
+            if (st && st.screened) {
+                badge.innerHTML = '🤖 LLM (' + esc(st.model || 'AI') + '): <strong>' + esc(verdict) + '</strong>';
+                badge.title = 'Click to view full AI pre-screening report';
+                if (verdict.indexOf('ACCEPT') !== -1 || verdict.indexOf('PROCEED') !== -1) {
+                    badge.style.background = '#dcfce7'; badge.style.color = '#15803d'; badge.style.borderColor = '#86efac';
+                } else if (verdict.indexOf('REJECT') !== -1) {
+                    badge.style.background = '#fee2e2'; badge.style.color = '#b91c1c'; badge.style.borderColor = '#fca5a5';
+                } else {
+                    badge.style.background = '#fef3c7'; badge.style.color = '#b45309'; badge.style.borderColor = '#fde68a';
+                }
+            } else {
+                badge.innerHTML = '🤖 AI: <strong>Click to Screen</strong>';
+                badge.title = 'No LLM pre-screening cached yet — click to run real-time LLM screening';
+                badge.style.background = '#f1f5f9'; badge.style.color = '#475569'; badge.style.borderColor = '#cbd5e1';
+            }
+            badge.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                openInScreenReader(subId, 'prescreen');
+            };
+        }
+
+        rowsToUpdate.forEach(function(r) {
+            if (_sfDashboardStatusCache[r.subId] && !r.item.querySelector('.sf-dash-ai-badge')) {
+                renderBadgeForRow(r.item, r.subId, _sfDashboardStatusCache[r.subId]);
+            }
         });
+
+        if (pendingIds.length > 0 && !_sfDashboardStatusFetching) {
+            _sfDashboardStatusFetching = true;
+            fetch(getContextBase() + '/scholarflow/dashboardStatuses?submissionIds=' + encodeURIComponent(pendingIds.join(',')), { credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    _sfDashboardStatusFetching = false;
+                    if (data && data.statuses) {
+                        Object.keys(data.statuses).forEach(function(k) {
+                            _sfDashboardStatusCache[k] = data.statuses[k];
+                        });
+                        rowsToUpdate.forEach(function(r) {
+                            if (_sfDashboardStatusCache[r.subId]) {
+                                renderBadgeForRow(r.item, r.subId, _sfDashboardStatusCache[r.subId]);
+                            }
+                        });
+                    }
+                })
+                .catch(function() { _sfDashboardStatusFetching = false; });
+        }
     }
     
 
@@ -524,8 +736,8 @@ function injectNativeReviewerMatchmaking(force) {
                 '      <span>ScholarFlow AI Reviewer Matchmaking</span>',
                 '      <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#4f46e5;color:#fff">Submission #' + sid + '</span>',
                 '    </div>',
-                '    <div style="font-size:12px;color:#475569;margin-top:2px">',
-                '      AI compatibility match percentages &amp; semantic justifications are displayed directly below. Click <strong>Select Reviewer</strong> to assign.',
+                '    <div id="sfNativeMatchStatus" style="font-size:12px;color:#475569;margin-top:2px">',
+                '      Live LLM reviewer compatibility &amp; conflict evaluation below. Click <strong>Select Reviewer</strong> to assign.',
                 '    </div>',
                 '  </div>',
                 '</div>',
@@ -569,17 +781,24 @@ function injectNativeReviewerMatchmaking(force) {
             }
         }
 
-        // 2. If recommendations are cached, apply immediately
+        // 2. If recommendations are already ready from paper-open prefetch, apply & sort immediately!
         if (window.__sfMatchmakingCache[sid] && !force) {
+            var stDone = window.__sfMatchmakingJobState[sid] || {};
+            var subDoneEl = document.getElementById('sfNativeMatchStatus');
+            if (subDoneEl) {
+                subDoneEl.innerHTML = '✅ Ready — Pre-evaluated by <strong>' + esc(stDone.model || window.__sfActiveModelName || 'Ollama LLM') + '</strong>' + (stDone.cached ? ' (cached)' : '') + '. Click <strong>Select Reviewer</strong> to assign.';
+            }
             applyReviewerMatchesToDom(reviewerItems, window.__sfMatchmakingCache[sid]);
+            if (reviewerPanel.getAttribute('data-sf-sorted-sid') !== String(sid)) {
+                sortReviewersByMatchScore(itemsList);
+                reviewerPanel.setAttribute('data-sf-sorted-sid', String(sid));
+            }
             return;
         }
 
-        if (window.__sfMatchmakingLoading[sid]) return;
-        window.__sfMatchmakingLoading[sid] = true;
-
         // Clear existing badges if force refresh
         if (force) {
+            reviewerPanel.removeAttribute('data-sf-sorted-sid');
             reviewerItems.forEach(function(li) {
                 var oldBadge = li.querySelector('.sf-ojs-match-badge');
                 if (oldBadge && oldBadge.parentNode) oldBadge.parentNode.removeChild(oldBadge);
@@ -588,43 +807,27 @@ function injectNativeReviewerMatchmaking(force) {
             });
         }
 
-        // Show loading tag on items
+        var jobState = window.__sfMatchmakingJobState[sid] || { percent: 5, stage: 'Matching...' };
+        // Show live loading tag on items
         reviewerItems.forEach(function(li) {
             var titleEl = li.querySelector('.listPanel__itemTitle, .pkpListPanelItem__title, [class*="itemTitle"], h4, h3');
             if (titleEl && !li.querySelector('.sf-ojs-match-badge')) {
                 var loadTag = document.createElement('span');
                 loadTag.className = 'sf-ojs-match-badge sf-ojs-loading-badge';
                 loadTag.style.cssText = 'background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle;display:inline-flex;align-items:center;gap:4px;';
-                loadTag.innerHTML = '🤖 Matching...';
+                loadTag.innerHTML = '🤖 ' + (jobState.percent || 5) + '% LLM...';
                 titleEl.appendChild(loadTag);
             }
         });
 
-        var url = getContextBase() + '/scholarflow/recommendReviewers?submissionId=' + sid + (force ? '&force_refresh=1' : '');
-        fetch(url, { credentials: 'same-origin' })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                window.__sfMatchmakingLoading[sid] = false;
-                var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
-                if (reanalyzeBtn) {
-                    reanalyzeBtn.innerHTML = '🔄 Refresh AI';
-                    reanalyzeBtn.disabled = false;
-                }
-                if (data && data.recommendations) {
-                    window.__sfMatchmakingCache[sid] = data.recommendations;
-                    applyReviewerMatchesToDom(reviewerItems, data.recommendations);
-                    sortReviewersByMatchScore(itemsList);
-                }
-            })
-            .catch(function(err) {
-                window.__sfMatchmakingLoading[sid] = false;
-                var reanalyzeBtn = document.getElementById('sfReanalyzeMatchBtn');
-                if (reanalyzeBtn) {
-                    reanalyzeBtn.innerHTML = '🔄 Refresh AI';
-                    reanalyzeBtn.disabled = false;
-                }
-                console.error('ScholarFlow native reviewer matchmaking error:', err);
-            });
+        // If already pre-fetching in background from paper open, just attach UI updates cleanly
+        if (window.__sfMatchmakingLoading[sid] && !force) {
+            var subRunEl = document.getElementById('sfNativeMatchStatus');
+            if (subRunEl) subRunEl.textContent = '⏳ ' + (jobState.percent || 5) + '% — ' + (jobState.stage || 'Evaluating candidates with LLM...');
+            return;
+        }
+
+        startReviewerMatchmakingJob(sid, !!force);
     }
 
     function applyReviewerMatchesToDom(reviewerItems, recommendations) {
@@ -662,8 +865,11 @@ function injectNativeReviewerMatchmaking(force) {
                 }
             }
 
-            var score = rec ? (typeof rec.score === 'number' ? rec.score : parseInt(rec.score, 10) || 0) : 0;
-            var reason = rec ? (rec.reason || rec.justification || '') : 'Evaluating reviewer alignment in real-time...';
+            if (!rec) {
+                return;
+            }
+            var score = (typeof rec.score === 'number' ? rec.score : parseInt(rec.score, 10) || 0);
+            var reason = rec.reason || rec.justification || '';
 
             // Store score on li for sorting
             li.setAttribute('data-sf-match-score', score);
@@ -785,6 +991,19 @@ function injectNativeReviewerMatchmaking(force) {
         });
     }
 
+    function fetchBackendHealth() {
+        fetch(getContextBase() + '/scholarflow/health', { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data && data.target_model) {
+                    window.__sfActiveModelName = data.target_model;
+                    var el = document.getElementById('sfReRunModelName');
+                    if (el) el.textContent = data.target_model;
+                }
+            })
+            .catch(function () {});
+    }
+
     function fetchUserInfo() {
         var url = getContextBase() + '/scholarflow/userInfo';
         fetch(url, { credentials: 'same-origin' })
@@ -793,6 +1012,7 @@ function injectNativeReviewerMatchmaking(force) {
                 if (data && data.user) {
                     currentUserInfo = data.user;
                     applyUserRoleGating();
+                    autoPrefetchOpenSubmissionMatchmaking();
                     if (cachedAnnotations && cachedAnnotations.length > 0) {
                         renderAnnotationsList(cachedAnnotations);
                     }
@@ -803,6 +1023,28 @@ function injectNativeReviewerMatchmaking(force) {
 
     function applyUserRoleGating() {
         if (!currentUserInfo) return;
+        if (!currentUserInfo.isLoggedIn) {
+            renderLoginRequiredState();
+            return;
+        }
+        var paperWrap = document.getElementById('sfPaperSelectorWrap');
+        var tabsBar = document.getElementById('sfTabsNavBar');
+        var docBar = document.getElementById('sfDocToolbarBar');
+        var commentsCol = document.getElementById('sfCommentsCol');
+        var splitter = document.getElementById('sfSplitter');
+        var docCol = document.getElementById('sfDocCol');
+        if (paperWrap) paperWrap.style.display = 'flex';
+        if (tabsBar) tabsBar.style.display = 'flex';
+        if (docBar) docBar.style.display = 'flex';
+        if (sidebarVisible) {
+            if (commentsCol) commentsCol.style.display = 'flex';
+            if (splitter) splitter.style.display = 'flex';
+            if (docCol) {
+                docCol.style.flex = '0 0 ' + (100 - sidebarRatio) + '%';
+                docCol.style.width = (100 - sidebarRatio) + '%';
+                docCol.style.borderRight = '1px solid #e2e8f0';
+            }
+        }
         var isAuthorOnly = currentUserInfo.isAuthorOnly;
         var isEditor     = currentUserInfo.isEditor;
         var isReviewer   = currentUserInfo.isReviewer;
@@ -1067,6 +1309,9 @@ function injectNativeReviewerMatchmaking(force) {
                 buildModal(targetSid);
                 overlay = document.getElementById('sfOverlay');
             }
+            if (cachedSubmissionsList && cachedSubmissionsList.length > 0) {
+                updateSubmissionSelect();
+            }
 
             if (overlay) {
                 overlay.style.display = 'flex';
@@ -1083,12 +1328,100 @@ function injectNativeReviewerMatchmaking(force) {
                 }
 
                 var tab = initialTab || 'viewer';
-                __sfSwitchTab(tab);
-                loadDocumentViewer(targetSid);
+                if (currentUserInfo && currentUserInfo.isLoggedIn === false) {
+                    renderLoginRequiredState();
+                } else if (!currentUserInfo) {
+                    var docCanvas = document.getElementById('sfDocCanvas');
+                    if (docCanvas) {
+                        docCanvas.innerHTML = '<div style="text-align:center;padding:80px 24px;color:#64748b;font-size:14px;font-weight:600">Checking session...</div>';
+                    }
+                    fetch(getContextBase() + '/scholarflow/userInfo', { credentials: 'same-origin' })
+                        .then(function (r) { return r.json(); })
+                        .then(function (data) {
+                            if (data && data.user) {
+                                currentUserInfo = data.user;
+                            } else {
+                                currentUserInfo = { isLoggedIn: false };
+                            }
+                            if (!currentUserInfo.isLoggedIn) {
+                                renderLoginRequiredState();
+                            } else {
+                                applyUserRoleGating();
+                                __sfSwitchTab(tab);
+                                loadDocumentViewer(targetSid);
+                            }
+                        })
+                        .catch(function () {
+                            renderLoginRequiredState();
+                        });
+                } else {
+                    applyUserRoleGating();
+                    __sfSwitchTab(tab);
+                    loadDocumentViewer(targetSid);
+                }
             }
         } catch (err) {
             console.error('ScholarFlow openInScreenReader error:', err);
         }
+    }
+
+    function renderLoginRequiredState() {
+        var loginUrl = getContextBase() + '/login';
+        var badge = document.getElementById('sfUserRoleBadge');
+        var titleHeader = document.getElementById('sfDocTitleHeader');
+        var paperWrap = document.getElementById('sfPaperSelectorWrap');
+        var tabsBar = document.getElementById('sfTabsNavBar');
+        var docBar = document.getElementById('sfDocToolbarBar');
+        var commentsCol = document.getElementById('sfCommentsCol');
+        var splitter = document.getElementById('sfSplitter');
+        var docCol = document.getElementById('sfDocCol');
+        var docCanvas = document.getElementById('sfDocCanvas');
+        var panelViewer = document.getElementById('sfPanelViewer');
+        var panelPre = document.getElementById('sfPanelPreScreen');
+        var panelRev = document.getElementById('sfPanelReviewers');
+
+        if (badge) {
+            badge.textContent = 'Not Logged In';
+            badge.style.background = '#fef3c7';
+            badge.style.color = '#92400e';
+            badge.style.borderColor = '#fde68a';
+        }
+        if (titleHeader) {
+            titleHeader.textContent = 'Sign in required to access manuscript reader, markups, and AI tools';
+        }
+        if (paperWrap) paperWrap.style.display = 'none';
+        if (tabsBar) tabsBar.style.display = 'none';
+        if (docBar) docBar.style.display = 'none';
+        if (commentsCol) commentsCol.style.display = 'none';
+        if (splitter) splitter.style.display = 'none';
+        if (panelPre) panelPre.style.display = 'none';
+        if (panelRev) panelRev.style.display = 'none';
+        if (panelViewer) panelViewer.style.display = 'flex';
+        if (docCol) {
+            docCol.style.flex = '1 1 100%';
+            docCol.style.width = '100%';
+            docCol.style.borderRight = 'none';
+        }
+
+        var loginHtml = [
+            '<div style="text-align:center;padding:52px 32px;max-width:480px;margin:60px auto;background:#ffffff;border-radius:16px;box-shadow:0 10px 30px rgba(15,23,42,0.08);border:1px solid #e2e8f0">',
+            '  <div style="width:64px;height:64px;margin:0 auto 18px;border-radius:16px;background:linear-gradient(135deg,#eef2ff,#e0e7ff);display:flex;align-items:center;justify-content:center;font-size:32px;border:1px solid #c7d2fe">🔐</div>',
+            '  <h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 10px">You Need to Log In First</h2>',
+            '  <p style="font-size:14px;color:#475569;line-height:1.6;margin:0 0 24px">',
+            '    Please log in with your OJS account (Editor, Reviewer, or Author) to use <strong>ScholarFlow</strong>, read manuscripts, leave inline markups, and run AI pre-screening.',
+            '  </p>',
+            '  <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">',
+            '    <a href="' + loginUrl + '" style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#4f46e5,#3b82f6);color:#ffffff;text-decoration:none;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(79,70,229,0.3)">',
+            '      <span>🔑</span> <span>Log In to Continue</span>',
+            '    </a>',
+            '    <button type="button" onclick="window.__sfClose()" style="display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:11px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">',
+            '      <span>Close</span>',
+            '    </button>',
+            '  </div>',
+            '</div>'
+        ].join('\n');
+
+        if (docCanvas) docCanvas.innerHTML = loginHtml;
     }
 
     // ── Open modal ─────────────────────────────────────────────────────────
@@ -1169,7 +1502,6 @@ function injectNativeReviewerMatchmaking(force) {
         }
     }
 
-    var cachedSubmissionsList = [];
 
     function escapeHtml(str) {
         if (!str) return '';
@@ -1197,6 +1529,12 @@ function injectNativeReviewerMatchmaking(force) {
             .then(function(data) {
                 if (data && data.success && data.submissions) {
                     cachedSubmissionsList = data.submissions;
+                    if (!getExplicitSubmissionIdFromUrl() && cachedSubmissionsList.length > 0) {
+                        var hasCurr = cachedSubmissionsList.some(function(s) { return String(s.id) === String(currentSubmissionId); });
+                        if (!hasCurr) {
+                            currentSubmissionId = String(cachedSubmissionsList[0].id);
+                        }
+                    }
                     updateSubmissionSelect();
                     renderPaperPickerCards(cachedSubmissionsList);
                     if (typeof callback === 'function') callback(cachedSubmissionsList);
@@ -1380,8 +1718,6 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
     // ── Toggle Comments Sidebar ──────────────────────────────────────────
-    var sidebarVisible = true;
-    var sidebarRatio = 32;
     try {
         var savedR = parseFloat(localStorage.getItem('sf_sidebar_ratio'));
         if (savedR >= 15 && savedR <= 70) sidebarRatio = savedR;
@@ -1626,7 +1962,7 @@ function injectNativeReviewerMatchmaking(force) {
                   '<div style="display:flex;gap:12px;margin-bottom:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px">',
                     '<div style="font-size:22px;line-height:1">⏳</div>',
                     '<div style="font-size:13px;color:#92400e;line-height:1.5">',
-                      '<strong>Notice:</strong> Querying the local AI model (qwen2.5) to perform fresh deep pre-screening will take <strong>15 to 30 seconds</strong>. Would you like to proceed?',
+                      '<strong>Notice:</strong> Querying the live Ollama LLM (<span id="sfReRunModelName">' + esc(window.__sfActiveModelName || 'local model') + '</span>) to stream a fresh manuscript audit from scratch. Live progress will display below. Proceed?',
                     '</div>',
                   '</div>',
                   '<div id="sfReRunScopeSection" style="margin-bottom:18px"></div>',
@@ -1719,7 +2055,7 @@ function injectNativeReviewerMatchmaking(force) {
                 '</div>',
               '</div>',
               '<div style="display:flex;align-items:center;gap:10px">',
-                '<div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.14);padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25)">',
+                '<div id="sfPaperSelectorWrap" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.14);padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.25)">',
                   '<span style="font-size:12px;color:#e0e7ff;font-weight:600;display:flex;align-items:center;gap:4px">📄 Paper:</span>',
                   '<select id="sfSubmissionSelect" onchange="__sfSelectPaper(this.value)" style="background:#ffffff;border:1px solid #cbd5e1;color:#0f172a;border-radius:6px;padding:4px 8px;font-size:12px;font-weight:600;max-width:280px;cursor:pointer;outline:none;text-overflow:ellipsis">',
                     '<option value="' + (sid || '1') + '">Loading papers...</option>',
@@ -1735,7 +2071,7 @@ function injectNativeReviewerMatchmaking(force) {
             '</div>',
 
             /* ── Tabs Navigation Bar (Modern Light Clean Aesthetic) ── */
-            '<div style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #e2e8f0;background:#ffffff;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.03)">',
+            '<div id="sfTabsNavBar" style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #e2e8f0;background:#ffffff;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.03)">',
               '<div class="sf-tabs-container" style="display:flex;gap:4px;padding:4px 0 0 0;">',
                 '<button id="sfTabViewer" class="sf-tab-btn active" onclick="event.stopPropagation(); __sfSwitchTab(\'viewer\');" style="background:none;border:none;border-bottom:3px solid #4f46e5;color:#4f46e5;font-weight:700;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">📖 Document &amp; Markups</button>',
                 '<button id="sfTabPreScreen" class="sf-tab-btn" onclick="event.stopPropagation(); __sfSwitchTab(\'prescreen\');" style="background:none;border:none;border-bottom:3px solid transparent;color:#64748b;font-weight:600;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">🤖 AI Pre-Screening</button>',
@@ -1753,7 +2089,7 @@ function injectNativeReviewerMatchmaking(force) {
               '<div id="sfPanelViewer" style="display:flex;flex:1;overflow:hidden;width:100%;position:relative">',
                 /* Left Canvas: Academic Paper Document Reader */
                 '<div id="sfDocCol" style="flex:0 0 68%;width:68%;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;border-right:1px solid #e2e8f0;box-sizing:border-box;min-width:320px">',
-                  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;background:#ffffff;padding:8px 16px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0">',
+                  '<div id="sfDocToolbarBar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;background:#ffffff;padding:8px 16px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0">',
                     '<div style="font-size:12px;color:#475569;font-weight:600;display:flex;align-items:center;gap:6px">',
                       '<span style="color:#eab308">💡</span> Select any sentence to leave a review markup &bull; Click sidebar comments to auto-scroll and highlight',
                     '</div>',
@@ -1872,19 +2208,19 @@ function injectNativeReviewerMatchmaking(force) {
 
         wrap.addEventListener('click', function (e) {
             e.stopPropagation();
-            e.stopImmediatePropagation();
             if (e.target === wrap) {
                 sfClose();
             }
-        }, true);
+        }, false);
         wrap.addEventListener('mousedown', function (e) {
             e.stopPropagation();
-            e.stopImmediatePropagation();
-        }, true);
+        }, false);
         wrap.addEventListener('mouseup', function (e) {
+            if (typeof handleDocMouseUp === 'function') {
+                handleDocMouseUp(e);
+            }
             e.stopPropagation();
-            e.stopImmediatePropagation();
-        }, true);
+        }, false);
 
         document.body.appendChild(wrap);
         initSplitterResize();
@@ -1941,6 +2277,9 @@ function injectNativeReviewerMatchmaking(force) {
             '  <button type="button" onclick="__sfSaveAnnotation()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
             '</div>'
         ].join('\n');
+        pop.addEventListener('click', function (e) { e.stopPropagation(); }, false);
+        pop.addEventListener('mousedown', function (e) { e.stopPropagation(); }, false);
+        pop.addEventListener('mouseup', function (e) { e.stopPropagation(); }, false);
         document.body.appendChild(pop);
     }
 
@@ -1948,6 +2287,33 @@ function injectNativeReviewerMatchmaking(force) {
     var _sfMouseDownX = 0;
     var _sfMouseDownY = 0;
     var _sfSelectingInCanvas = false;
+
+    function handleDocMouseUp(e) {
+        var pop = document.getElementById('sfSelectionPopover');
+        if (pop && pop.contains(e.target)) return;
+
+        if (_sfSelectingInCanvas) {
+            _sfSelectingInCanvas = false;
+            var dx = Math.abs(e.clientX - _sfMouseDownX);
+            var dy = Math.abs(e.clientY - _sfMouseDownY);
+            var sel = window.getSelection();
+            var hasText = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
+            if (dx > 5 || dy > 5 || hasText) {
+                setTimeout(function() {
+                    handleTextSelection(e);
+                }, 10);
+                return;
+            }
+        }
+
+        // If clicked outside popover with no active canvas selection, dismiss
+        if (pop && pop.style.display === 'flex') {
+            var sel = window.getSelection();
+            if (!sel || sel.isCollapsed) {
+                hideSelectionPopover();
+            }
+        }
+    }
 
     function bindDocumentSelectionListeners() {
         ensureSelectionPopover();
@@ -1967,32 +2333,7 @@ function injectNativeReviewerMatchmaking(force) {
 
         if (!_sfSelectionListening) {
             _sfSelectionListening = true;
-            document.addEventListener('mouseup', function(e) {
-                var pop = document.getElementById('sfSelectionPopover');
-                if (pop && pop.contains(e.target)) return;
-
-                if (_sfSelectingInCanvas) {
-                    _sfSelectingInCanvas = false;
-                    var dx = Math.abs(e.clientX - _sfMouseDownX);
-                    var dy = Math.abs(e.clientY - _sfMouseDownY);
-                    var sel = window.getSelection();
-                    var hasText = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
-                    if (dx > 5 || dy > 5 || hasText) {
-                        setTimeout(function() {
-                            handleTextSelection(e);
-                        }, 10);
-                        return;
-                    }
-                }
-
-                // If clicked outside popover with no active canvas selection, dismiss
-                if (pop && pop.style.display === 'flex') {
-                    var sel = window.getSelection();
-                    if (!sel || sel.isCollapsed) {
-                        hideSelectionPopover();
-                    }
-                }
-            });
+            document.addEventListener('mouseup', handleDocMouseUp);
         }
     }
 
@@ -2941,75 +3282,57 @@ function injectNativeReviewerMatchmaking(force) {
             }
         };
 
-        var elapsedSeconds = 0;
-        window.__sfPrescreenProgressTimer = setInterval(function() {
-            elapsedSeconds += 0.5;
-            var targetPct;
-            var stepMsg;
-            if (elapsedSeconds <= 3) {
-                targetPct = 5 + (elapsedSeconds / 3) * 15;
-                stepMsg = 'Extracting manuscript text & section hierarchy...';
-            } else if (elapsedSeconds <= 12) {
-                targetPct = 20 + ((elapsedSeconds - 3) / 9) * 25;
-                stepMsg = 'Auditing research scope & high-impact journal fit...';
-            } else if (elapsedSeconds <= 26) {
-                targetPct = 45 + ((elapsedSeconds - 12) / 14) * 25;
-                stepMsg = 'Evaluating technical soundness & methodology rigor...';
-            } else if (elapsedSeconds <= 42) {
-                targetPct = 70 + ((elapsedSeconds - 26) / 16) * 18;
-                stepMsg = 'Analyzing academic novelty, contribution & potential flaws...';
-            } else if (elapsedSeconds <= 65) {
-                targetPct = 88 + ((elapsedSeconds - 42) / 23) * 8;
-                stepMsg = 'Synthesizing editorial recommendation & final report...';
-            } else {
-                targetPct = Math.min(98, 96 + (elapsedSeconds - 65) * 0.1);
-                stepMsg = 'Finalizing editorial evaluation...';
-            }
-            updateProgress(targetPct, stepMsg);
-        }, 500);
+        updateProgress(5, 'Submitting manuscript to Ollama LLM queue...');
 
         var scopeParam = scope ? ('&scope=' + encodeURIComponent(scope)) : '';
-        var url = getContextBase() + '/scholarflow/analyze?submissionId=' + activeSid + (forceRefresh ? '&refresh=1' : '') + scopeParam;
+        var url = getContextBase() + '/scholarflow/analyze?submissionId=' + activeSid + '&async=1' + (forceRefresh ? '&refresh=1' : '') + scopeParam;
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (r) {
                 if (!r.ok) {
                     return r.text().then(function (t) {
                         var snippet = t ? t.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().substring(0, 200) : '';
-                        throw new Error('Server error (' + r.status + '): ' + (snippet || 'Failed to complete analysis.'));
+                        throw new Error('Server error (' + r.status + '): ' + (snippet || 'Failed to start analysis.'));
                     });
                 }
                 return r.json();
             })
-            .then(function (data) {
-                if (window.__sfPrescreenProgressTimer) {
-                    clearInterval(window.__sfPrescreenProgressTimer);
-                    window.__sfPrescreenProgressTimer = null;
-                }
-                if (String(activeSid) !== String(currentSubmissionId)) {
-                    return;
-                }
-                if (data && data.report) {
-                    updateProgress(100, 'Analysis complete! Rendering editorial report...');
-                    setTimeout(function() {
-                        if (data.is_private) {
-                            setCacheTag('🔒 Private Session Draft', '#f3e8ff', '#7e22ce', true);
-                        } else if (data.cached) {
-                            setCacheTag('⚡ Cached (Instant)', '#dcfce7', '#059669', true);
+            .then(function (startData) {
+                if (String(activeSid) !== String(currentSubmissionId)) return;
+                if (startData && startData.job_id) {
+                    pollScholarFlowJob(startData.job_id, function(job) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return false;
+                        updateProgress(job.percent || 5, job.stage || 'Running LLM analysis...');
+                    }, function(data) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return;
+                        if (data && data.report) {
+                            updateProgress(100, 'LLM evaluation complete!');
+                            setTimeout(function() {
+                                var mdl = data.model || window.__sfActiveModelName || 'LLM';
+                                if (data.is_private) {
+                                    setCacheTag('🔒 Private LLM Draft (' + mdl + ')', '#f3e8ff', '#7e22ce', true);
+                                } else if (data.cached) {
+                                    setCacheTag('⚡ Cached LLM (' + mdl + ')', '#dcfce7', '#059669', true);
+                                } else {
+                                    setCacheTag('🤖 Live LLM Generated (' + mdl + (data.tokens ? ' • ' + data.tokens + ' tokens' : '') + ')', '#eef2ff', '#4338ca', true);
+                                }
+                                showReport(data.report);
+                            }, 200);
                         } else {
-                            setCacheTag('🤖 Fresh AI Evaluation Generated', '#eef2ff', '#4338ca', true);
+                            showError('LLM returned an empty report.');
                         }
-                        showReport(data.report);
-                    }, 350);
-                } else if (data && data.error) {
-                    showError(data.error);
+                    }, function(errMsg) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return;
+                        showError(errMsg);
+                    });
+                } else if (startData && startData.report) {
+                    updateProgress(100, 'LLM evaluation complete!');
+                    showReport(startData.report);
+                } else if (startData && startData.error) {
+                    showError(startData.error);
                 }
             })
             .catch(function (err) {
-                if (window.__sfPrescreenProgressTimer) {
-                    clearInterval(window.__sfPrescreenProgressTimer);
-                    window.__sfPrescreenProgressTimer = null;
-                }
                 if (String(activeSid) !== String(currentSubmissionId)) return;
                 showError('Error: ' + err.message);
             });
@@ -3088,34 +3411,20 @@ function injectNativeReviewerMatchmaking(force) {
             }
         };
 
-        var elapsedSeconds = 0;
-        window.__sfReviewerProgressTimer = setInterval(function() {
-            elapsedSeconds += 0.4;
-            var targetPct;
-            var stepMsg;
-            if (elapsedSeconds <= 2) {
-                targetPct = 5 + (elapsedSeconds / 2) * 15;
-                stepMsg = 'Extracting manuscript domain keywords & key methodologies...';
-            } else if (elapsedSeconds <= 6) {
-                targetPct = 20 + ((elapsedSeconds - 2) / 4) * 28;
-                stepMsg = 'Querying editorial reviewer pool & subject expertise profiles...';
-            } else if (elapsedSeconds <= 14) {
-                targetPct = 48 + ((elapsedSeconds - 6) / 8) * 27;
-                stepMsg = 'Computing semantic compatibility & publication history alignment...';
-            } else if (elapsedSeconds <= 22) {
-                targetPct = 75 + ((elapsedSeconds - 14) / 8) * 15;
-                stepMsg = 'Checking active reviewer quotas & conflict of interest...';
-            } else if (elapsedSeconds <= 32) {
-                targetPct = 90 + ((elapsedSeconds - 22) / 10) * 6;
-                stepMsg = 'Ranking candidates & generating editorial justifications...';
-            } else {
-                targetPct = Math.min(98, 96 + (elapsedSeconds - 32) * 0.1);
-                stepMsg = 'Finalizing ranked reviewer recommendations...';
-            }
-            updateReviewerProgress(targetPct, stepMsg);
-        }, 400);
+        updateReviewerProgress(5, 'Fetching reviewer profiles & active workloads from OJS...');
 
-        var url = getContextBase() + '/scholarflow/recommendReviewers?submissionId=' + activeSid + (forceRefresh ? '&force_refresh=1' : '');
+        fetch(getContextBase() + '/scholarflow/releasedReviewers?submissionId=' + activeSid, { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(relData) {
+                if (relData && relData.released) {
+                    relData.released.forEach(function(row) {
+                        releasedReviewersMap[row.reviewer_id] = true;
+                    });
+                }
+            })
+            .catch(function() {});
+
+        var url = getContextBase() + '/scholarflow/recommendReviewers?submissionId=' + activeSid + '&async=1' + (forceRefresh ? '&force_refresh=1' : '');
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (r) {
@@ -3127,48 +3436,64 @@ function injectNativeReviewerMatchmaking(force) {
                 }
                 return r.json();
             })
-            .then(function (data) {
-                if (window.__sfReviewerProgressTimer) {
-                    clearInterval(window.__sfReviewerProgressTimer);
-                    window.__sfReviewerProgressTimer = null;
-                }
+            .then(function (startData) {
                 if (String(activeSid) !== String(currentSubmissionId)) return;
-
-                if (data && data.recommendations) {
-                    updateReviewerProgress(100, 'Reviewer matching complete! Rendering ranked candidates...');
-                    setTimeout(function() {
-                        var badge = document.getElementById('sfReviewerBadge');
-                        var cacheTag = document.getElementById('sfReviewerCacheTag');
-                        if (badge) {
-                            badge.textContent = 'MATCHED (' + (data.recommendations.length || 0) + ' CANDIDATES)';
-                            badge.style.background = '#dcfce7';
-                            badge.style.color = '#15803d';
-                            badge.style.borderColor = '#86efac';
+                if (startData && startData.job_id) {
+                    var candidateMeta = startData.candidateMeta || {};
+                    pollScholarFlowJob(startData.job_id, function(job) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return false;
+                        updateReviewerProgress(job.percent || 5, job.stage || 'Matching reviewers via LLM...');
+                    }, function(data) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return;
+                        if (data && data.recommendations) {
+                            data.recommendations.forEach(function(rec) {
+                                if (candidateMeta[rec.id]) {
+                                    rec.interests = candidateMeta[rec.id].interests;
+                                    rec.active_reviews = candidateMeta[rec.id].active_reviews;
+                                    rec.completed_reviews = candidateMeta[rec.id].completed_reviews;
+                                }
+                            });
+                            updateReviewerProgress(100, 'LLM reviewer evaluation complete!');
+                            setTimeout(function() {
+                                var badge = document.getElementById('sfReviewerBadge');
+                                var cacheTag = document.getElementById('sfReviewerCacheTag');
+                                var mdl = data.model || window.__sfActiveModelName || 'LLM';
+                                if (badge) {
+                                    badge.textContent = 'MATCHED (' + (data.recommendations.length || 0) + ' CANDIDATES)';
+                                    badge.style.background = '#dcfce7';
+                                    badge.style.color = '#15803d';
+                                    badge.style.borderColor = '#86efac';
+                                }
+                                if (cacheTag) {
+                                    if (data.cached) {
+                                        cacheTag.textContent = '⚡ Cached LLM (' + mdl + ')';
+                                        cacheTag.style.background = '#dcfce7';
+                                        cacheTag.style.color = '#059669';
+                                        cacheTag.style.display = 'inline-block';
+                                    } else {
+                                        cacheTag.textContent = '🤖 Live LLM Evaluated (' + mdl + ')';
+                                        cacheTag.style.background = '#eef2ff';
+                                        cacheTag.style.color = '#4338ca';
+                                        cacheTag.style.display = 'inline-block';
+                                    }
+                                }
+                                showReviewers(data.recommendations);
+                            }, 200);
+                        } else {
+                            showReviewerError('LLM returned no reviewer recommendations.');
                         }
-                        if (cacheTag) {
-                            if (data.cached) {
-                                cacheTag.textContent = '⚡ Cached (Instant)';
-                                cacheTag.style.background = '#dcfce7';
-                                cacheTag.style.color = '#059669';
-                                cacheTag.style.display = 'inline-block';
-                            } else {
-                                cacheTag.textContent = '🤖 Fresh AI Evaluation Generated';
-                                cacheTag.style.background = '#eef2ff';
-                                cacheTag.style.color = '#4338ca';
-                                cacheTag.style.display = 'inline-block';
-                            }
-                        }
-                        showReviewers(data.recommendations);
-                    }, 350);
-                } else if (data && data.error) {
-                    showReviewerError(data.error);
+                    }, function(errMsg) {
+                        if (String(activeSid) !== String(currentSubmissionId)) return;
+                        showReviewerError(errMsg);
+                    });
+                } else if (startData && startData.recommendations) {
+                    updateReviewerProgress(100, 'LLM reviewer evaluation complete!');
+                    showReviewers(startData.recommendations);
+                } else if (startData && startData.error) {
+                    showReviewerError(startData.error);
                 }
             })
             .catch(function (err) {
-                if (window.__sfReviewerProgressTimer) {
-                    clearInterval(window.__sfReviewerProgressTimer);
-                    window.__sfReviewerProgressTimer = null;
-                }
                 if (String(activeSid) !== String(currentSubmissionId)) return;
                 showReviewerError('Error: ' + err.message);
             });
@@ -3252,12 +3577,60 @@ function injectNativeReviewerMatchmaking(force) {
 
 
 
+    function pollScholarFlowJob(jobId, onProgress, onDone, onError) {
+        var stopped = false;
+        function tick() {
+            if (stopped) return;
+            fetch(getContextBase() + '/scholarflow/jobStatus?jobId=' + encodeURIComponent(jobId), { credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(job) {
+                    if (stopped) return;
+                    if (!job) {
+                        stopped = true;
+                        if (onError) onError('Empty job status response.');
+                        return;
+                    }
+                    if (job.status === 'done') {
+                        stopped = true;
+                        if (onDone) onDone(job.result || {});
+                    } else if (job.status === 'error') {
+                        stopped = true;
+                        if (onError) onError(job.error || 'LLM execution error.');
+                    } else {
+                        if (onProgress) {
+                            var keepGoing = onProgress(job);
+                            if (keepGoing === false) { stopped = true; return; }
+                        }
+                        setTimeout(tick, 350);
+                    }
+                })
+                .catch(function(err) {
+                    if (stopped) return;
+                    stopped = true;
+                    if (onError) onError('Polling error: ' + err.message);
+                });
+        }
+        tick();
+        return function() { stopped = true; };
+    }
+
     function showReport(md) {
         var up = md.toUpperCase();
-        if (up.indexOf('PROCEED TO PEER REVIEW') !== -1 || up.indexOf('ACCEPT FOR PEER REVIEW') !== -1) {
-            setBadge('PROCEED TO PEER REVIEW', '#dcfce7', '#15803d', '#86efac');
-        } else if (up.indexOf('DESK REJECT') !== -1) {
+        var sec5 = up.indexOf('5. RECOMMENDATION');
+        var tail = sec5 !== -1 ? up.substring(sec5) : up.slice(-450);
+
+        if (tail.indexOf('DESK REJECT') !== -1 || up.indexOf('DESK REJECT') !== -1) {
             setBadge('DESK REJECT', '#fee2e2', '#b91c1c', '#fca5a5');
+        } else if (tail.indexOf('PROCEED TO PEER REVIEW') !== -1 || tail.indexOf('ACCEPT FOR PEER REVIEW') !== -1) {
+            setBadge('PROCEED TO PEER REVIEW', '#dcfce7', '#15803d', '#86efac');
+        } else if (tail.indexOf('MINOR REVISION') !== -1) {
+            setBadge('MINOR REVISION', '#fef3c7', '#b45309', '#fde68a');
+        } else if (tail.indexOf('MAJOR REVISION') !== -1) {
+            setBadge('MAJOR REVISION', '#ffedd5', '#c2410c', '#fdba74');
+        } else if (/\bREJECT\b/.test(tail)) {
+            setBadge('REJECT', '#fee2e2', '#b91c1c', '#fca5a5');
+        } else if (/\bACCEPT\b/.test(tail)) {
+            setBadge('ACCEPT', '#dcfce7', '#15803d', '#86efac');
         } else {
             setBadge('REVISIONS REQUIRED', '#fef3c7', '#b45309', '#fde68a');
         }
@@ -3399,39 +3772,44 @@ function injectNativeReviewerMatchmaking(force) {
             paperTitle = selPaper.title;
         }
 
-        var lines = [];
-        lines.push('Dear Author(s),');
-        lines.push('');
-        lines.push('Please review the detailed feedback and inline markups below regarding your submission:');
-        lines.push('Title: "' + paperTitle + '" (Submission #' + currentSubmissionId + ')');
-        lines.push('');
-        lines.push('======================================================================');
-        lines.push('  FEEDBACK FROM: ' + sourceLabel);
-        lines.push('======================================================================');
-        lines.push('');
-
         if (targetComments.length === 0) {
-            lines.push('No markups recorded for this reviewer.');
-        } else {
-            targetComments.forEach(function (c, idx) {
-                lines.push((idx + 1) + '. Manuscript Excerpt:');
-                lines.push('   "' + (c.selected_text || '(General comment)') + '"');
-                lines.push('   Reviewer Note:');
-                lines.push('   ' + c.comment);
-                lines.push('');
-            });
+            letterText.value = 'No markups recorded for ' + sourceLabel + '.';
+            return;
         }
 
-        lines.push('----------------------------------------------------------------------');
-        lines.push('Instructions for Revision:');
-        lines.push('Please provide a point-by-point response letter detailing how each of');
-        lines.push('the remarks above was addressed in your revised manuscript draft.');
-        lines.push('');
-        lines.push('Sincerely,');
-        lines.push((currentUserInfo && currentUserInfo.name) ? currentUserInfo.name : 'Journal Editorial Office');
-        lines.push('Editorial Board');
+        var mdl = window.__sfActiveModelName || 'Ollama LLM';
+        letterText.value = '🤖 Drafting cohesive editorial decision letter via ' + mdl + ' (' + targetComments.length + ' markup comments)... Please wait.';
+        letterText.disabled = true;
 
-        letterText.value = lines.join('\n');
+        var payload = {
+            submission_id: parseInt(currentSubmissionId || '1', 10),
+            title: paperTitle,
+            source_label: sourceLabel,
+            editor_name: (currentUserInfo && currentUserInfo.name) ? currentUserInfo.name : 'Journal Editorial Office',
+            annotations: targetComments.map(function (c) {
+                return { selected_text: c.selected_text || '', comment: c.comment || '' };
+            })
+        };
+
+        fetch(getContextBase() + '/scholarflow/draftAuthorLetter', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            letterText.disabled = false;
+            if (data && data.success && data.letter) {
+                letterText.value = data.letter;
+            } else {
+                letterText.value = 'Error generating letter with LLM: ' + ((data && data.error) || 'Unknown error');
+            }
+        })
+        .catch(function (err) {
+            letterText.disabled = false;
+            letterText.value = 'Network error calling LLM: ' + err.message;
+        });
     };
 
     window.__sfCopyAuthorLetter = function () {
@@ -3539,19 +3917,34 @@ function injectNativeReviewerMatchmaking(force) {
 
         var letter = document.getElementById('sfReleaseReviewerLetter');
         if (letter) {
-            letter.value = [
-                'Dear Dr. ' + reviewerName + ',',
-                '',
-                'Thank you very much for kindly accepting our peer review invitation for the manuscript entitled "' + paperTitle + '" (Submission #' + currentSubmissionId + ').',
-                '',
-                'We are writing to let you know that we have already obtained the required quota of peer reviews for this submission stage, and the editorial decision is now being formulated. Therefore, you do not need to proceed with your review of this paper.',
-                '',
-                'We deeply appreciate your willingness to support the journal and look forward to collaborating with you on upcoming submissions in your field of expertise.',
-                '',
-                'Warm regards,',
-                (currentUserInfo && currentUserInfo.name ? currentUserInfo.name : 'Journal Editorial Office'),
-                'Editorial Board'
-            ].join('\n');
+            var mdl = window.__sfActiveModelName || 'Ollama LLM';
+            letter.value = '🤖 Drafting courteous reviewer release email via ' + mdl + '... Please wait.';
+            letter.disabled = true;
+
+            fetch(getContextBase() + '/scholarflow/draftReleaseLetter', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    submission_id: parseInt(currentSubmissionId || '1', 10),
+                    title: paperTitle,
+                    reviewer_name: reviewerName,
+                    editor_name: (currentUserInfo && currentUserInfo.name) ? currentUserInfo.name : 'Journal Editorial Office'
+                })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                letter.disabled = false;
+                if (data && data.success && data.letter) {
+                    letter.value = data.letter;
+                } else {
+                    letter.value = 'Error generating release notification via LLM: ' + ((data && data.error) || 'Unknown error');
+                }
+            })
+            .catch(function (err) {
+                letter.disabled = false;
+                letter.value = 'Network error calling LLM: ' + err.message;
+            });
         }
     };
 
@@ -3577,6 +3970,17 @@ function injectNativeReviewerMatchmaking(force) {
     window.__sfConfirmReleaseReviewer = function () {
         if (!currentReleaseReviewer) return;
         releasedReviewersMap[currentReleaseReviewer.id] = true;
+
+        fetch(getContextBase() + '/scholarflow/releasedReviewers', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                submission_id: parseInt(currentSubmissionId || '1', 10),
+                reviewer_id: parseInt(currentReleaseReviewer.id, 10),
+                reviewer_name: currentReleaseReviewer.name
+            })
+        }).catch(function () {});
 
         var statusMsg = document.getElementById('sfReleaseStatusMsg');
         if (statusMsg) {

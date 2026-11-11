@@ -19,6 +19,7 @@ namespace APP\plugins\generic\scholarflow;
 
 use APP\core\Application;
 use APP\facades\Repo;
+use Illuminate\Support\Facades\DB;
 use PKP\config\Config;
 use PKP\security\Role;
 use PKP\userGroup\UserGroup;
@@ -89,6 +90,44 @@ class ScholarFlowHandler extends \APP\handler\Handler
         ];
     }
 
+
+    /**
+     * Enforce per-submission authorization so non-editors only access assigned submissions.
+     */
+    protected function userCanAccessSubmission(int $submissionId, $user, array $userInfo): bool
+    {
+        if (!$user || $submissionId <= 0) {
+            return false;
+        }
+        if (!empty($userInfo['isEditor'])) {
+            return true;
+        }
+        $uid = (int) $user->getId();
+        try {
+            if (!empty($userInfo['isReviewer'])) {
+                $hasReview = Repo::reviewAssignment()->getCollector()
+                    ->filterBySubmissionIds([$submissionId])
+                    ->filterByReviewerIds([$uid])
+                    ->getCount() > 0;
+                if ($hasReview) {
+                    return true;
+                }
+            }
+            if (!empty($userInfo['isAuthor'])) {
+                $hasStage = DB::table('stage_assignments')
+                    ->where('submission_id', $submissionId)
+                    ->where('user_id', $uid)
+                    ->exists();
+                if ($hasStage) {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            return false;
+        }
+        return false;
+    }
+
     /**
      * Handle GET /scholarflow/userInfo
      */
@@ -108,6 +147,15 @@ class ScholarFlowHandler extends \APP\handler\Handler
         header('Content-Type: application/json');
         try {
             $userInfo = $this->getUserRoleInfo($request);
+            if (empty($userInfo['isLoggedIn'])) {
+                echo json_encode([
+                    'success' => false,
+                    'requiresAuth' => true,
+                    'error' => 'You need to login first to use ScholarFlow.',
+                    'submissions' => []
+                ]);
+                exit;
+            }
             $context = $request->getRouter() ? $request->getContext() : null;
             
             // If editor or admin, retrieve submissions across all hosted journals
@@ -117,11 +165,19 @@ class ScholarFlowHandler extends \APP\handler\Handler
                     ->filterByContextIds([\APP\core\Application::SITE_CONTEXT_ID_ALL])
                     ->getMany();
             } else {
+                $user = $request->getUser();
+                $uid = $user ? (int) $user->getId() : 0;
                 $contextId = $context ? $context->getId() : \APP\core\Application::SITE_CONTEXT_ID_ALL;
-                $submissions = Repo::submission()
+                $allSubs = Repo::submission()
                     ->getCollector()
                     ->filterByContextIds([$contextId])
                     ->getMany();
+                $submissions = [];
+                foreach ($allSubs as $candidateSub) {
+                    if ($this->userCanAccessSubmission((int) $candidateSub->getId(), $user, $userInfo)) {
+                        $submissions[] = $candidateSub;
+                    }
+                }
             }
 
             $contextDao = Application::getContextDAO();
@@ -215,25 +271,24 @@ class ScholarFlowHandler extends \APP\handler\Handler
             }
         }
 
-        // Database direct fallback across all journal contexts
+        // Query OJS active database connection directly without storing credentials
         try {
-            $host = Config::getVar('database', 'host', 'localhost');
-            $username = Config::getVar('database', 'username', 'ojsuser');
-            $password = Config::getVar('database', 'password', 'Ojs@12345');
-            $dbname = Config::getVar('database', 'name', 'ojs');
-            $conn = @new \mysqli($host, $username, $password, $dbname);
-            if ($conn && !$conn->connect_error) {
-                $q = "SELECT f.path FROM submission_files sf JOIN files f ON sf.file_id = f.file_id WHERE sf.submission_id = " . (int)$submissionId . " AND (f.path LIKE '%.docx' OR f.path LIKE '%.pdf') ORDER BY (sf.file_stage IN (2,4,15)) DESC, sf.submission_file_id DESC LIMIT 1";
-                $res = $conn->query($q);
-                if ($res && ($row = $res->fetch_assoc())) {
-                    $relPath = ltrim((string) $row['path'], '/\\');
-                    $fp = $filesDir . DIRECTORY_SEPARATOR . $relPath;
-                    $conn->close();
-                    if (file_exists($fp)) {
-                        return $fp;
-                    }
+            $row = DB::table('submission_files as sf')
+                ->join('files as f', 'sf.file_id', '=', 'f.file_id')
+                ->where('sf.submission_id', (int) $submissionId)
+                ->where(function ($q) {
+                    $q->where('f.path', 'like', '%.docx')->orWhere('f.path', 'like', '%.pdf');
+                })
+                ->orderByRaw('(sf.file_stage IN (2,4,15)) DESC')
+                ->orderByDesc('sf.submission_file_id')
+                ->select('f.path')
+                ->first();
+            if ($row && !empty($row->path)) {
+                $relPath = ltrim((string) $row->path, '/\\');
+                $fp = $filesDir . DIRECTORY_SEPARATOR . $relPath;
+                if (file_exists($fp)) {
+                    return $fp;
                 }
-                $conn->close();
             }
         } catch (\Throwable $e) {}
 
@@ -299,6 +354,17 @@ class ScholarFlowHandler extends \APP\handler\Handler
             exit;
         }
 
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            echo json_encode(['error' => 'You are not assigned to Submission #' . $submissionId . '.']);
+            exit;
+        }
+
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'You are not authorized to export markups for this submission.']);
+            exit;
+        }
+
         $submission = Repo::submission()->get($submissionId);
         if (!$submission) {
             echo json_encode(['error' => 'Submission #' . $submissionId . ' not found.']);
@@ -338,6 +404,12 @@ class ScholarFlowHandler extends \APP\handler\Handler
     {
         header('Content-Type: application/json');
 
+        $user = $request->getUser();
+        if (!$user) {
+            echo json_encode(['error' => 'You must be logged in to view review markups.']);
+            exit;
+        }
+
         $submissionId = (int) $request->getUserVar('submissionId');
         if (!$submissionId) {
             echo json_encode(['error' => 'Missing submissionId parameter.']);
@@ -345,6 +417,10 @@ class ScholarFlowHandler extends \APP\handler\Handler
         }
 
         $userInfo = $this->getUserRoleInfo($request);
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            echo json_encode(['error' => 'You are not authorized to access markups for this submission.']);
+            exit;
+        }
 
         try {
             $client = new \GuzzleHttp\Client(['timeout' => 30]);
@@ -434,6 +510,10 @@ class ScholarFlowHandler extends \APP\handler\Handler
             echo json_encode(['error' => 'Submission ID and comment text are required.']);
             exit;
         }
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            echo json_encode(['error' => 'You are not authorized to comment on this submission.']);
+            exit;
+        }
 
         try {
             $client = new \GuzzleHttp\Client(['timeout' => 30]);
@@ -489,26 +569,33 @@ class ScholarFlowHandler extends \APP\handler\Handler
         }
 
         // Editorial authority: Editors can moderate/delete any comment.
-        // Reviewers are only allowed to delete their own comments.
+        // Reviewers are only allowed to delete their own comments on assigned submissions.
         if (!$userInfo['isEditor']) {
-            $submissionId = (int) $request->getUserVar('submissionId', 1);
+            $submissionId = (int) $request->getUserVar('submissionId');
+            if (!$submissionId || !$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+                echo json_encode(['error' => 'You are not authorized to delete comments for this submission.']);
+                exit;
+            }
             try {
                 $checkClient = new \GuzzleHttp\Client(['timeout' => 10]);
                 $annResp = $checkClient->get('http://127.0.0.1:8000/api/annotations?submission_id=' . $submissionId);
                 $annData = json_decode($annResp->getBody()->getContents(), true);
+                $isOwner = false;
                 if (!empty($annData['annotations'])) {
                     foreach ($annData['annotations'] as $ann) {
                         if ((int)$ann['id'] === $annotationId) {
-                            if ((int)$ann['user_id'] !== (int)$user->getId()) {
-                                echo json_encode(['error' => 'Reviewers can only delete their own comments.']);
-                                exit;
-                            }
+                            $isOwner = ((int)$ann['user_id'] === (int)$user->getId());
                             break;
                         }
                     }
                 }
+                if (!$isOwner) {
+                    echo json_encode(['error' => 'Reviewers can only delete their own comments.']);
+                    exit;
+                }
             } catch (\Exception $e) {
-                // If verification lookup times out, proceed to delete
+                echo json_encode(['error' => 'Could not verify comment ownership: ' . $e->getMessage()]);
+                exit;
             }
         }
 
@@ -530,6 +617,14 @@ class ScholarFlowHandler extends \APP\handler\Handler
      */
     public function exportAnnotations(array $args, $request): void
     {
+        $user = $request->getUser();
+        if (!$user) {
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'You must be logged in to export markups.']);
+            exit;
+        }
+        $userInfo = $this->getUserRoleInfo($request);
+
         $submissionId = (int) $request->getUserVar('submissionId');
         if (!$submissionId) {
             header('Content-Type: application/json');
@@ -744,6 +839,10 @@ HTML;
             echo json_encode(['error' => 'Missing submissionId parameter.']);
             exit;
         }
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            echo json_encode(['error' => 'You are not assigned to this submission.']);
+            exit;
+        }
 
         $submission = Repo::submission()->get($submissionId);
         if (!$submission) {
@@ -759,10 +858,8 @@ HTML;
 
         $forceRefresh = (bool) $request->getUserVar('refresh');
         $requestedScope = trim((string) $request->getUserVar('scope'));
-        
-        // Scope logic:
-        // - Reviewers can only re-run for their own private session
-        // - Editors can choose 'editor_private' (keep to themselves) or 'global' (apply to all reviewers)
+        $isAsync = !empty($request->getUserVar('async'));
+
         if ($userInfo['isReviewer'] && !$userInfo['isEditor']) {
             $scope = 'reviewer_private';
         } elseif ($userInfo['isEditor']) {
@@ -771,9 +868,13 @@ HTML;
             $scope = 'global';
         }
 
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
         try {
-            $client   = new \GuzzleHttp\Client(['timeout' => 240]);
-            $response = $client->post('http://127.0.0.1:8000/api/analyze', [
+            $client   = new \GuzzleHttp\Client(['timeout' => $isAsync ? 15 : 240]);
+            $endpoint = $isAsync ? '/api/analyze/start' : '/api/analyze';
+            $response = $client->post($backendUrl . $endpoint, [
                 'json' => [
                     'file_path' => $filePath,
                     'force_refresh' => $forceRefresh,
@@ -791,6 +892,72 @@ HTML;
             ]);
         }
         exit;
+    }
+
+    /**
+     * Gather real reviewer profiles, interests, affiliations, and workload from OJS.
+     */
+    protected function buildReviewerCandidates(int $contextId, $user, array $userInfo): array
+    {
+        $reviewerUsers = Repo::user()->getCollector()
+            ->filterByRoleIds([Role::ROLE_ID_REVIEWER])
+            ->filterByContextIds([$contextId])
+            ->getMany();
+
+        $candidates = [];
+        foreach ($reviewerUsers as $reviewer) {
+            if ($userInfo['isReviewer'] && !$userInfo['isEditor'] && $reviewer->getId() === $user->getId()) {
+                continue;
+            }
+            $rid = (int) $reviewer->getId();
+            $interests = $reviewer->getInterestString();
+            if (!$interests) {
+                try {
+                    $interestValues = DB::table('user_interests as ui')
+                        ->join('controlled_vocab_entries as cve', 'cve.controlled_vocab_entry_id', '=', 'ui.controlled_vocab_entry_id')
+                        ->join('controlled_vocab_entry_settings as cves', 'cves.controlled_vocab_entry_id', '=', 'cve.controlled_vocab_entry_id')
+                        ->where('ui.user_id', $rid)
+                        ->where('cves.setting_name', 'interest')
+                        ->orderBy('cves.setting_value')
+                        ->pluck('cves.setting_value')
+                        ->toArray();
+                    if (!empty($interestValues)) {
+                        $interests = implode(', ', $interestValues);
+                    }
+                } catch (\Throwable $te) {}
+            }
+
+            $affiliation = '';
+            try {
+                $affiliation = (string) ($reviewer->getLocalizedAffiliation() ?: '');
+            } catch (\Throwable $e) {}
+
+            $activeReviews = 0;
+            $completedReviews = 0;
+            try {
+                $assignments = Repo::reviewAssignment()->getCollector()
+                    ->filterByReviewerIds([$rid])
+                    ->getMany();
+                foreach ($assignments as $ra) {
+                    if ($ra->getDateCompleted()) {
+                        $completedReviews++;
+                    } elseif (!$ra->getDeclined() && !$ra->getCancelled()) {
+                        $activeReviews++;
+                    }
+                }
+            } catch (\Throwable $e) {}
+
+            $candidates[] = [
+                'id' => $rid,
+                'name' => (string) $reviewer->getFullName(),
+                'interests' => (string) ($interests ?: 'None declared in profile'),
+                'affiliation' => $affiliation,
+                'active_reviews' => $activeReviews,
+                'completed_reviews' => $completedReviews,
+            ];
+        }
+
+        return $candidates;
     }
 
     /**
@@ -842,92 +1009,60 @@ HTML;
             exit;
         }
 
-        $contextId = (int) ($submission->getData('contextId') ?: ($context ? $context->getId() : 1));
-
-        $reviewerUsers = Repo::user()->getCollector()
-            ->filterByRoleIds([Role::ROLE_ID_REVIEWER])
-            ->filterByContextIds([$contextId])
-            ->getMany();
-
-        $candidates = [];
-        foreach ($reviewerUsers as $reviewer) {
-            // Only exclude self if user is a reviewer (editors can see all)
-            if ($userInfo['isReviewer'] && !$userInfo['isEditor'] && $reviewer->getId() === $user->getId()) {
-                continue;
+        $authorList = [];
+        foreach ($publication->getData('authors') ?? [] as $a) {
+            $given = is_array($a->getData('givenName')) ? reset($a->getData('givenName')) : $a->getData('givenName');
+            $family = is_array($a->getData('familyName')) ? reset($a->getData('familyName')) : $a->getData('familyName');
+            $aff = is_array($a->getData('affiliation')) ? reset($a->getData('affiliation')) : $a->getData('affiliation');
+            $nm = trim($given . ' ' . $family);
+            if ($nm) {
+                $authorList[] = $aff ? ($nm . ' (' . $aff . ')') : $nm;
             }
-            $interests = $reviewer->getInterestString();
-            // Fall back to querying controlled vocab directly if getInterestString() returns empty
-            if (!$interests) {
-                $host = Config::getVar('database', 'host', 'localhost');
-                $username = Config::getVar('database', 'username', 'ojsuser');
-                $password = Config::getVar('database', 'password', 'Ojs@12345');
-                $dbname = Config::getVar('database', 'name', 'ojs');
-                try {
-                    $interestConn = @new \mysqli($host, $username, $password, $dbname);
-                    if ($interestConn && !$interestConn->connect_error) {
-                        $uid = (int)$reviewer->getId();
-                        $res = $interestConn->query("
-                            SELECT GROUP_CONCAT(cves.setting_value ORDER BY cves.setting_value SEPARATOR ', ') as interests
-                            FROM user_interests ui
-                            JOIN controlled_vocab_entries cve ON cve.controlled_vocab_entry_id = ui.controlled_vocab_entry_id
-                            JOIN controlled_vocab_entry_settings cves ON cves.controlled_vocab_entry_id = cve.controlled_vocab_entry_id
-                            WHERE ui.user_id = $uid AND cves.setting_name = 'interest'
-                            GROUP BY ui.user_id
-                        ");
-                        if ($res) {
-                            $row = $res->fetch_assoc();
-                            $interests = $row ? ($row['interests'] ?? '') : '';
-                        }
-                        $interestConn->close();
-                    }
-                } catch (\Throwable $te) {
-                    // Ignore DB fallback errors
-                }
-            }
-            if (!$interests) {
-                $interests = 'General Scholarly Review, Peer Evaluation, Subject Matter Expertise';
-            }
-
-            $candidates[] = [
-                'id' => (int) $reviewer->getId(),
-                'name' => (string) $reviewer->getFullName(),
-                'interests' => (string) $interests,
-            ];
         }
+        $authorsStr = implode('; ', $authorList);
+
+        $contextId = (int) ($submission->getData('contextId') ?: ($context ? $context->getId() : 1));
+        $candidates = $this->buildReviewerCandidates($contextId, $user, $userInfo);
 
         if (empty($candidates)) {
             echo json_encode(['error' => 'No active reviewers found in this journal.']);
             exit;
         }
 
-        if (count($candidates) > 35) {
-            $candidates = array_slice($candidates, 0, 35);
-        }
-
         $forceRefresh = !empty($request->getUserVar('force_refresh'));
+        $isAsync = !empty($request->getUserVar('async'));
+
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
 
         try {
-            $client   = new \GuzzleHttp\Client(['timeout' => 240]);
-            $response = $client->post('http://127.0.0.1:8000/api/recommend_reviewers', [
+            $client   = new \GuzzleHttp\Client(['timeout' => $isAsync ? 15 : 240]);
+            $endpoint = $isAsync ? '/api/recommend_reviewers/start' : '/api/recommend_reviewers';
+            $response = $client->post($backendUrl . $endpoint, [
                 'json' => [
+                    'submission_id' => $submissionId,
                     'title' => $title,
                     'abstract' => $abstract,
+                    'authors' => $authorsStr,
                     'reviewers' => $candidates,
                     'force_refresh' => $forceRefresh,
                 ],
             ]);
             $body = json_decode($response->getBody()->getContents(), true);
+            $interestMap = [];
+            foreach ($candidates as $c) {
+                $interestMap[$c['id']] = $c;
+            }
             if (!empty($body['recommendations'])) {
-                $interestMap = [];
-                foreach ($candidates as $c) {
-                    $interestMap[$c['id']] = $c['interests'];
-                }
                 foreach ($body['recommendations'] as &$rec) {
                     if (isset($interestMap[$rec['id']])) {
-                        $rec['interests'] = $interestMap[$rec['id']];
+                        $rec['interests'] = $interestMap[$rec['id']]['interests'];
+                        $rec['active_reviews'] = $interestMap[$rec['id']]['active_reviews'];
+                        $rec['completed_reviews'] = $interestMap[$rec['id']]['completed_reviews'];
                     }
                 }
             }
+            $body['candidateMeta'] = $interestMap;
             $body['user'] = $userInfo;
             echo json_encode($body);
         } catch (\Exception $e) {
@@ -935,6 +1070,198 @@ HTML;
                 'error' => 'Could not reach the ScholarFlow Python backend: ' . $e->getMessage(),
             ]);
         }
+        exit;
+    }
+
+    /**
+     * Handle GET /scholarflow/jobStatus?jobId=X
+     * Polls real-time LLM token/batch progress without locking PHP session.
+     */
+    public function jobStatus(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        if (!$user) {
+            echo json_encode(['error' => 'Unauthorized']);
+            exit;
+        }
+        $jobId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $request->getUserVar('jobId'));
+        if (!$jobId) {
+            echo json_encode(['error' => 'Missing jobId parameter.']);
+            exit;
+        }
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 10]);
+            $response = $client->get($backendUrl . '/api/job/' . $jobId);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['status' => 'error', 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle POST /scholarflow/draftAuthorLetter
+     * Synthesizes reviewer/editor inline feedback into an editorial letter via LLM.
+     */
+    public function draftAuthorLetter(array $args, $request): void
+    {
+        @set_time_limit(180);
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        $userInfo = $this->getUserRoleInfo($request);
+        if (!$user || !$userInfo['isEditor']) {
+            echo json_encode(['error' => 'Only Journal Editors can draft author decision letters.']);
+            exit;
+        }
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 150]);
+            $response = $client->post($backendUrl . '/api/draft_author_letter', ['json' => $input]);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['error' => 'LLM letter generation failed: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle POST /scholarflow/draftReleaseLetter
+     * Drafts a quota-reached reviewer release email via LLM.
+     */
+    public function draftReleaseLetter(array $args, $request): void
+    {
+        @set_time_limit(120);
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        $userInfo = $this->getUserRoleInfo($request);
+        if (!$user || !$userInfo['isEditor']) {
+            echo json_encode(['error' => 'Only Journal Editors can draft reviewer release notifications.']);
+            exit;
+        }
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 120]);
+            $response = $client->post($backendUrl . '/api/draft_release_letter', ['json' => $input]);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['error' => 'LLM release email generation failed: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle GET/POST /scholarflow/releasedReviewers
+     * Reads or persists released reviewers in SQLite.
+     */
+    public function releasedReviewers(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        $userInfo = $this->getUserRoleInfo($request);
+        if (!$user || !$userInfo['isEditor']) {
+            echo json_encode(['error' => 'Only Journal Editors can access released reviewer records.']);
+            exit;
+        }
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+        $client = new \GuzzleHttp\Client(['timeout' => 15]);
+
+        try {
+            if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                $input = json_decode(file_get_contents('php://input'), true) ?: [];
+                $input['released_by'] = (string) ($userInfo['name'] ?? '');
+                $response = $client->post($backendUrl . '/api/released_reviewers', ['json' => $input]);
+                echo $response->getBody()->getContents();
+            } else {
+                $sid = (int) $request->getUserVar('submissionId');
+                $response = $client->get($backendUrl . '/api/released_reviewers', [
+                    'query' => ['submission_id' => $sid],
+                ]);
+                echo $response->getBody()->getContents();
+            }
+        } catch (\Exception $e) {
+            echo json_encode(['error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle GET /scholarflow/dashboardStatuses?submissionIds=1,2,3
+     * Returns real cached LLM pre-screening status & verdict per submission.
+     */
+    public function dashboardStatuses(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        if (!$user) {
+            echo json_encode(['success' => false, 'statuses' => []]);
+            exit;
+        }
+        $userInfo = $this->getUserRoleInfo($request);
+        $idsRaw = (string) $request->getUserVar('submissionIds');
+        $ids = array_values(array_filter(array_map('intval', explode(',', $idsRaw))));
+        if (empty($ids)) {
+            echo json_encode(['success' => true, 'statuses' => []]);
+            exit;
+        }
+
+        $items = [];
+        foreach ($ids as $sid) {
+            if (!$this->userCanAccessSubmission($sid, $user, $userInfo)) {
+                continue;
+            }
+            $items[] = [
+                'submission_id' => $sid,
+                'file_path' => (string) ($this->resolveManuscriptFilePath($sid) ?: ''),
+            ];
+        }
+        if (empty($items)) {
+            echo json_encode(['success' => true, 'statuses' => []]);
+            exit;
+        }
+
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 15]);
+            $response = $client->post($backendUrl . '/api/dashboard_statuses', [
+                'json' => ['items' => $items],
+            ]);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['success' => false, 'statuses' => [], 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle GET /scholarflow/health
+     * Exposes active Ollama model metadata to the frontend without hardcoding.
+     */
+    public function health(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 5]);
+            $response = $client->get($backendUrl . '/api/health');
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['status' => 'unhealthy', 'error' => $e->getMessage()]);
+        }
+        exit;
     }
 }
 
