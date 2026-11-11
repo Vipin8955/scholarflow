@@ -515,3 +515,33 @@ body.sf-resizing canvas {
 .sf-dash-ai-badge:hover {
     background: #e0e7ff !important;
 }
+
+
+/* ?? Clean & Simplified OJS Sidebar Navigation ?? */
+/* 1. Hide DOIs and Tools from Sidebar */
+#app-nav a[href*="/dois"],
+#app-nav a[href*="/doi"],
+#app-nav a[href*="/tools"],
+#app-nav a[href*="/management/tools"],
+.app__navItem a[href*="/dois"],
+.app__navItem a[href*="/doi"],
+.app__navItem a[href*="/tools"],
+.app__navItem a[href*="/management/tools"],
+.pkpNav__item a[href*="/dois"],
+.pkpNav__item a[href*="/doi"],
+.pkpNav__item a[href*="/tools"],
+.pkpNav__item a[href*="/management/tools"],
+li:has(> a[href*="/dois"]),
+li:has(> a[href*="/doi"]),
+li:has(> a[href*="/tools"]),
+li:has(> a[href*="/management/tools"]),
+div:has(> a[href*="/dois"]),
+div:has(> a[href*="/tools"]) {
+    display: none !important;
+}
+
+/* 2. Styling for the Clean Dashboard Navigation Tabs */
+#app-nav a[href*="currentViewId=active"],
+#app-nav a[href*="currentViewId=archived"] {
+    transition: all 0.2s ease-in-out;
+}

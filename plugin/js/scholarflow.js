@@ -169,10 +169,12 @@
         fetchSubmissionsList();
         injectNativeOJSButtons();
         injectNativeReviewerMatchmaking();
+        simplifyOjsUi();
         setInterval(function () {
             ensureButton();
             injectNativeOJSButtons();
             injectNativeReviewerMatchmaking();
+            simplifyOjsUi();
         }, 800);
 
         if (window.MutationObserver && !window.__sfObserverInitialized) {
@@ -181,6 +183,7 @@
                 var observer = new MutationObserver(function () {
                     injectNativeOJSButtons();
                     injectNativeReviewerMatchmaking();
+                    simplifyOjsUi();
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
             } catch (_) {}
@@ -3653,6 +3656,51 @@ function injectNativeReviewerMatchmaking(force) {
     }
     function escapeHtml(s) {
         return esc(s);
+    }
+
+
+    // ?? Simplify OJS UI: Remove DOIs/Tools & Replace Sub-queues with Active & Archived ??
+    function simplifyOjsUi() {
+        try {
+            // 1. Remove DOIs and Tools from Sidebar
+            var navLinks = document.querySelectorAll('#app-nav a, .app__nav a, .pkpSideNav a, a[href*="/dois"], a[href*="/tools"]');
+            navLinks.forEach(function (link) {
+                var href = (link.getAttribute('href') || '').toLowerCase();
+                var text = (link.textContent || '').trim().toLowerCase();
+                if (href.includes('/dois') || href.includes('/doi') || text === 'dois' || text === 'doi') {
+                    var container = link.closest('li') || link.closest('.pkpSideNav__item') || link;
+                    if (container) container.style.display = 'none';
+                }
+                if (href.includes('/management/tools') || href.includes('/tools') || text === 'tools') {
+                    var container = link.closest('li') || link.closest('.pkpSideNav__item') || link;
+                    if (container) container.style.display = 'none';
+                }
+            });
+
+            // 2. Hide cluttered intermediate sub-queues under Editor Dashboard
+            var unwantedViewPatterns = [
+                'assigned-to-me', 'needs-editor', 'initial-review', 'needs-reviews',
+                'awaiting-reviews', 'reviews-submitted', 'reviews-overdue',
+                'revisions-requested', 'revisions-submitted', 'incomplete-submissions',
+                'external-review', 'review-all', 'copyediting', 'production', 'scheduled'
+            ];
+            unwantedViewPatterns.forEach(function (pattern) {
+                var links = document.querySelectorAll('#app-nav a[href*="currentViewId=' + pattern + '"]');
+                links.forEach(function (lnk) {
+                    var container = lnk.closest('li') || lnk.closest('.pkpSideNav__item') || lnk;
+                    if (container) container.style.display = 'none';
+                });
+            });
+
+            // If legacy separate published/declined links exist, hide them
+            var legacyArchiveLinks = document.querySelectorAll('#app-nav a[href*="currentViewId=published"], #app-nav a[href*="currentViewId=declined"]');
+            legacyArchiveLinks.forEach(function (lnk) {
+                var container = lnk.closest('li') || lnk.closest('.pkpSideNav__item') || lnk;
+                if (container) container.style.display = 'none';
+            });
+        } catch (err) {
+            // Safe fail
+        }
     }
 
 })();
