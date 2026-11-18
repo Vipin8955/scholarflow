@@ -103,7 +103,7 @@ class ScholarFlowPlugin extends GenericPlugin
                                    ELSE 0 END) DESC,
                              total_reviews DESC, 
                              j.journal_id ASC
-                    LIMIT 3
+                    LIMIT 6
                 ";
                 $stmt = $pdo->query($sql);
                 $topJournalsRaw = $stmt ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
