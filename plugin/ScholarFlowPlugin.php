@@ -68,16 +68,93 @@ class ScholarFlowPlugin extends GenericPlugin
         );
 
         try {
-            $user = $request->getUser();
-            if ($user) {
-                $journalDao = \PKP\db\DAORegistry::getDAO('JournalDAO');
-                if ($journalDao) {
-                    $templateManager->assign('allJournals', $journalDao->getAll(true)->toArray());
-                }
-            } else {
-                $templateManager->assign('allJournals', []);
+            $journalDao = \PKP\db\DAORegistry::getDAO('JournalDAO');
+            if ($journalDao) {
+                $templateManager->assign('allJournals', $journalDao->getAll(true)->toArray());
             }
-        } catch (\Throwable $te) {}
+
+            // Retrieve Top 3 Completed/Published Journals dynamically from OJS Database
+            $pdo = \Illuminate\Support\Facades\DB::connection()->getPdo();
+            if ($pdo) {
+                $sql = "
+                    SELECT j.journal_id, j.path,
+                           latest_i.issue_id, latest_i.volume, latest_i.number, latest_i.year, latest_i.date_published,
+                           it.setting_value AS issue_title,
+                           jn.setting_value AS journal_name,
+                           jd.setting_value AS journal_desc,
+                           ja.setting_value AS journal_acronym,
+                           jab.setting_value AS journal_abbrev
+                    FROM journals j
+                    INNER JOIN (
+                        SELECT journal_id, MAX(issue_id) AS max_issue_id
+                        FROM issues
+                        WHERE published = 1
+                        GROUP BY journal_id
+                    ) mi ON j.journal_id = mi.journal_id
+                    INNER JOIN issues latest_i ON mi.max_issue_id = latest_i.issue_id
+                    LEFT JOIN issue_settings it ON latest_i.issue_id = it.issue_id AND it.setting_name = 'title'
+                    LEFT JOIN journal_settings jn ON j.journal_id = jn.journal_id AND jn.setting_name = 'name'
+                    LEFT JOIN journal_settings jd ON j.journal_id = jd.journal_id AND jd.setting_name = 'description'
+                    LEFT JOIN journal_settings ja ON j.journal_id = ja.journal_id AND ja.setting_name = 'acronym'
+                    LEFT JOIN journal_settings jab ON j.journal_id = jab.journal_id AND jab.setting_name = 'abbreviation'
+                    WHERE j.enabled = 1
+                    ORDER BY latest_i.date_published DESC, j.journal_id ASC
+                    LIMIT 3
+                ";
+                $stmt = $pdo->query($sql);
+                $topJournalsRaw = $stmt ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+                $topCompletedJournals = [];
+                $dispatcher = $request->getDispatcher();
+
+                $categoryMap = [
+                    'jcs' => 'Computer Science & Cybersecurity',
+                    'jeas' => 'Environmental & Agricultural Sciences',
+                    'jms' => 'Medical & Surgical Innovations',
+                    'jast' => 'Applied Science & Engineering',
+                    'jbms' => 'Biomedical Engineering',
+                    'test' => 'Interdisciplinary Studies'
+                ];
+
+                foreach ($topJournalsRaw as $row) {
+                    $jPath = $row['path'];
+                    $journalUrl = $dispatcher ? $dispatcher->url($request, Application::ROUTE_PAGE, $jPath, 'index') : ($baseUrl . '/index.php/' . $jPath);
+                    $cleanDesc = trim(strip_tags($row['journal_desc'] ?? ''));
+                    if (empty($cleanDesc)) {
+                        $cleanDesc = 'A peer-reviewed academic journal published under ScholarFlow Open Access guidelines.';
+                    }
+
+                    $volInfo = '';
+                    if (!empty($row['volume'])) {
+                        $volInfo = 'Vol. ' . $row['volume'];
+                        if (!empty($row['number'])) {
+                            $volInfo .= ' No. ' . $row['number'];
+                        }
+                        if (!empty($row['year'])) {
+                            $volInfo .= ' (' . $row['year'] . ')';
+                        }
+                    } elseif (!empty($row['issue_title'])) {
+                        $volInfo = $row['issue_title'];
+                    }
+
+                    $topCompletedJournals[] = [
+                        'journal_id' => $row['journal_id'],
+                        'path' => $jPath,
+                        'name' => $row['journal_name'] ?? ucfirst($jPath),
+                        'acronym' => $row['journal_acronym'] ?? strtoupper($jPath),
+                        'abbreviation' => $row['journal_abbrev'] ?? '',
+                        'description' => $cleanDesc,
+                        'category' => $categoryMap[$jPath] ?? 'Scholarly Research',
+                        'volume_info' => $volInfo,
+                        'issue_title' => $row['issue_title'] ?? '',
+                        'url' => $journalUrl,
+                        'cover_url' => null
+                    ];
+                }
+                $templateManager->assign('topCompletedJournals', $topCompletedJournals);
+            }
+        } catch (\Throwable $te) {
+            $templateManager->assign('topCompletedJournals', []);
+        }
 
         $router = $request->getRouter();
         $requestedPage = ($router && method_exists($router, 'getRequestedPage')) ? (string) $router->getRequestedPage($request) : '';
