@@ -22,8 +22,14 @@ class ScholarFlowPlugin extends GenericPlugin
         if (parent::register($category, $path, $mainContextId)) {
             // Always attach assets and routes so all roles (Editor, Reviewer, Manager) can access ScholarFlow
             Hook::add('TemplateManager::display', $this->registerAssets(...));
-            Hook::add('Dashboard::views', $this->simplifyDashboardViews(...));
             Hook::add('LoadHandler', $this->handleRouting(...));
+            Hook::add('Request::getProtocol', function (string $hookName, array $args): bool {
+                if (strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https') {
+                    $protocol = &$args[0];
+                    $protocol = 'https';
+                }
+                return Hook::CONTINUE;
+            });
             return true;
         }
         return false;
@@ -61,152 +67,33 @@ class ScholarFlowPlugin extends GenericPlugin
             ['contexts' => ['backend', 'frontend']]
         );
 
-        // ── Simplify OJS Navigation and Dashboard Views ──
+        try {
+            $user = $request->getUser();
+            if ($user) {
+                $journalDao = \PKP\db\DAORegistry::getDAO('JournalDAO');
+                if ($journalDao) {
+                    $templateManager->assign('allJournals', $journalDao->getAll(true)->toArray());
+                }
+            } else {
+                $templateManager->assign('allJournals', []);
+            }
+        } catch (\Throwable $te) {}
+
+        $router = $request->getRouter();
+        $requestedPage = ($router && method_exists($router, 'getRequestedPage')) ? (string) $router->getRequestedPage($request) : '';
+        $requestedOp = ($router && method_exists($router, 'getRequestedOp')) ? (string) $router->getRequestedOp($request) : '';
+
+        // ── Preserve all OJS Navigation Features and Options in ScholarFlow Top Bar ──
         $menu = $templateManager->getState('menu');
         if (is_array($menu)) {
-            // 1. Remove DOIs and Tools from sidebar
-            unset($menu['dois']);
-            unset($menu['tools']);
-
-            // 2. Simplify Editor Dashboard sub-queues into two clean views: Active & Archived
-            if (isset($menu['dashboards']) && is_array($menu['dashboards'])) {
-                $context = $request->getContext();
-                $router = $request->getRouter();
-                $requestedViewId = $request->getUserVar('currentViewId') ?? 'active';
-
-                $activeCount = 0;
-                $archivedCount = 0;
-                if ($context) {
-                    try {
-                        $activeCount = Repo::submission()->getCollector()
-                            ->filterByContextIds([$context->getId()])
-                            ->filterByStatus([PKPSubmission::STATUS_QUEUED])
-                            ->getCount();
-
-                        $archivedCount = Repo::submission()->getCollector()
-                            ->filterByContextIds([$context->getId()])
-                            ->filterByStatus([PKPSubmission::STATUS_PUBLISHED, PKPSubmission::STATUS_DECLINED])
-                            ->getCount();
-                    } catch (\Throwable $e) {}
-                }
-
-                $newSubmenu = [
-                    'active' => [
-                        'id' => 'active',
-                        'name' => 'Active Submissions',
-                        'url' => $router->url($request, null, 'dashboard', 'editorial', null, ['currentViewId' => 'active']),
-                        'isCurrent' => ($requestedViewId !== 'archived'),
-                        'badge' => ['slot' => (string) $activeCount]
-                    ],
-                    'archived' => [
-                        'id' => 'archived',
-                        'name' => 'Archived Submissions',
-                        'url' => $router->url($request, null, 'dashboard', 'editorial', null, ['currentViewId' => 'archived']),
-                        'isCurrent' => ($requestedViewId === 'archived'),
-                        'badge' => ['slot' => (string) $archivedCount]
-                    ]
-                ];
-
-                // Preserve "Start A New Submission" if present
-                if (isset($menu['dashboards']['submenu']['newSubmission'])) {
-                    $newSubmenu['newSubmission'] = $menu['dashboards']['submenu']['newSubmission'];
-                }
-
-                $menu['dashboards']['submenu'] = $newSubmenu;
+            // Remove "Start A New Submission" from Editor Dashboard submenu so it does not clutter editor queues
+            if (isset($menu['dashboards']['submenu']['newSubmission'])) {
+                unset($menu['dashboards']['submenu']['newSubmission']);
             }
 
             $templateManager->setState(['menu' => $menu]);
+            $templateManager->assign('sfMenu', $menu);
         }
-
-        // Also simplify pageInitConfig views for DashboardPage
-        $pageInitConfig = $templateManager->getState('pageInitConfig');
-        if (is_array($pageInitConfig) && isset($pageInitConfig['views'])) {
-            $context = $request->getContext();
-            $activeCount = 0;
-            $archivedCount = 0;
-            if ($context) {
-                try {
-                    $activeCount = Repo::submission()->getCollector()
-                        ->filterByContextIds([$context->getId()])
-                        ->filterByStatus([PKPSubmission::STATUS_QUEUED])
-                        ->getCount();
-
-                    $archivedCount = Repo::submission()->getCollector()
-                        ->filterByContextIds([$context->getId()])
-                        ->filterByStatus([PKPSubmission::STATUS_PUBLISHED, PKPSubmission::STATUS_DECLINED])
-                        ->getCount();
-                } catch (\Throwable $e) {}
-            }
-
-            $pageInitConfig['views'] = [
-                [
-                    'id' => 'active',
-                    'name' => 'Active Submissions',
-                    'count' => $activeCount,
-                    'queryParams' => [
-                        'status' => [PKPSubmission::STATUS_QUEUED]
-                    ]
-                ],
-                [
-                    'id' => 'archived',
-                    'name' => 'Archived Submissions',
-                    'count' => $archivedCount,
-                    'queryParams' => [
-                        'status' => [PKPSubmission::STATUS_PUBLISHED, PKPSubmission::STATUS_DECLINED]
-                    ]
-                ]
-            ];
-            $templateManager->setState(['pageInitConfig' => $pageInitConfig]);
-        }
-
-        return Hook::CONTINUE;
-    }
-
-    /**
-     * Filter Dashboard views hook so that any handler querying Dashboard views
-     * receives only the two clean views: Active Submissions & Archived Submissions.
-     */
-    public function simplifyDashboardViews(string $hookName, array $args): bool
-    {
-        $viewsData = &$args[0];
-        $request = Application::get()->getRequest();
-        $context = $request ? $request->getContext() : null;
-        if (!$context) {
-            return Hook::CONTINUE;
-        }
-
-        $activeCount = 0;
-        $archivedCount = 0;
-        try {
-            $activeCount = Repo::submission()->getCollector()
-                ->filterByContextIds([$context->getId()])
-                ->filterByStatus([PKPSubmission::STATUS_QUEUED])
-                ->getCount();
-
-            $archivedCount = Repo::submission()->getCollector()
-                ->filterByContextIds([$context->getId()])
-                ->filterByStatus([PKPSubmission::STATUS_PUBLISHED, PKPSubmission::STATUS_DECLINED])
-                ->getCount();
-        } catch (\Throwable $e) {}
-
-        $viewsData = [
-            [
-                'id' => 'active',
-                'name' => 'Active Submissions',
-                'count' => $activeCount,
-                'queryParams' => [
-                    'status' => [PKPSubmission::STATUS_QUEUED]
-                ]
-            ],
-            [
-                'id' => 'archived',
-                'name' => 'Archived Submissions',
-                'count' => $archivedCount,
-                'queryParams' => [
-                    'status' => [PKPSubmission::STATUS_PUBLISHED, PKPSubmission::STATUS_DECLINED]
-                ]
-            ]
-        ];
 
         return Hook::CONTINUE;
     }

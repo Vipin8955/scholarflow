@@ -77,6 +77,16 @@ def init_db():
             PRIMARY KEY (submission_id, reviewer_id)
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS author_letters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            submission_id INTEGER NOT NULL,
+            source_label TEXT NOT NULL,
+            editor_name TEXT NOT NULL,
+            letter TEXT NOT NULL,
+            sent_at TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -86,7 +96,12 @@ init_db()
 
 # ── Pydantic Models ──────────────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
-    file_path: str
+    file_path: Optional[str] = ""
+    submission_id: int = 0
+    title: Optional[str] = ""
+    abstract: Optional[str] = ""
+    keywords: Optional[str] = ""
+    authors: Optional[str] = ""
     force_refresh: bool = False
     user_id: int = 0
     scope: str = "global"
@@ -127,6 +142,7 @@ class RecommendRequest(BaseModel):
     title: str
     abstract: str
     authors: str = ""
+    keywords: str = ""
     reviewers: List[ReviewerItem]
     force_refresh: bool = False
 
@@ -137,6 +153,13 @@ class DraftAuthorLetterRequest(BaseModel):
     source_label: str
     editor_name: str = "Editorial Board"
     annotations: List[dict]
+
+
+class SendAuthorLetterRecord(BaseModel):
+    submission_id: int
+    source_label: str
+    editor_name: str
+    letter: str
 
 
 class DraftReleaseLetterRequest(BaseModel):
@@ -567,32 +590,9 @@ async def export_annotations(payload: ExportRequest):
         f"**Generated On:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"**Total Inline Comments:** {len(annotations)}",
         "",
+        "---",
+        "",
     ]
-
-    if annotations:
-        comments_block = "\n".join(
-            f"- [{a['user_role']}] {a['user_name']} on \"{a['selected_text'][:180]}\": {a['comment']}"
-            for a in annotations
-        )
-        summary_prompt = f"""You are a senior academic journal editor. Summarize the following {len(annotations)} inline peer-review comments on the manuscript "{title}" into a concise 3-4 bullet Executive Summary highlighting the main revision themes and editorial priorities. Output clean Markdown bullets only.
-
-COMMENTS:
-{comments_block}
-"""
-        try:
-            summary_md, _ = await stream_ollama(
-                summary_prompt,
-                options={"temperature": 0.2, "num_ctx": 4096, "num_predict": 350},
-                timeout=90.0,
-            )
-            md_lines.append(f"## AI Executive Summary ({MODEL_NAME})")
-            md_lines.append(summary_md)
-            md_lines.append("")
-        except Exception as e:
-            md_lines.append(f"## AI Executive Summary Unavailable ({str(e)})")
-            md_lines.append("")
-
-    md_lines.extend(["---", ""])
 
     if not annotations:
         md_lines.append("*No inline comments or markups have been recorded for this manuscript.*\n")
@@ -618,13 +618,21 @@ COMMENTS:
 
 # ── AI Manuscript Pre-Screening (100% LLM + Real Live Progress) ──────────────
 async def execute_prescreening(payload: AnalyzeRequest, job_id: Optional[str] = None) -> dict:
-    file_path = payload.file_path
-    if not os.path.exists(file_path):
-        raise ValueError(f"File not found at: {file_path}")
-
+    file_path = (payload.file_path or "").strip()
+    submission_id = payload.submission_id
+    title = (payload.title or "").strip()
+    abstract = (payload.abstract or "").strip()
+    keywords = (payload.keywords or "").strip()
+    authors = (payload.authors or "").strip()
     is_private = (payload.scope in ["editor_private", "reviewer_private", "private"]) and payload.user_id > 0
-    private_key = f"{file_path}:user:{payload.user_id}"
-    global_key = file_path
+
+    # Determine unique cache key based on submission / title / file
+    cache_base = f"sub_{submission_id}" if submission_id else (f"title_{title[:50]}" if title else file_path)
+    if not cache_base:
+        cache_base = "unknown_submission"
+
+    private_key = f"{cache_base}:user:{payload.user_id}"
+    global_key = cache_base
 
     if job_id:
         update_job(job_id, percent=8, stage="Checking cached LLM reports...")
@@ -673,57 +681,45 @@ async def execute_prescreening(payload: AnalyzeRequest, job_id: Optional[str] = 
                 update_job(job_id, status="done", percent=100, stage="Loaded cached LLM evaluation.", result=res)
             return res
 
-    if job_id:
-        update_job(job_id, percent=14, stage="Parsing manuscript file and extracting full text...")
-
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".pdf":
-        extracted_text, num_pages = extract_text_from_pdf(file_path, max_pages=40)
-        parse_note = f"{num_pages} pages"
-    elif ext == ".docx":
-        extracted_text = extract_text_from_docx(file_path)
-        parse_note = "DOCX"
-    else:
-        raise ValueError(f"Unsupported file format: {ext}. ScholarFlow supports PDF and DOCX manuscripts.")
-
-    if not extracted_text.strip():
-        raise ValueError("The file appears to have no extractable text.")
-
-    words = extracted_text.split()
-    max_words = 3500
-    if len(words) > max_words:
-        distilled_text = " ".join(words[:max_words]) + f"\n\n[Truncated at {max_words} of {len(words)} words to fit model context.]"
-    else:
-        distilled_text = extracted_text
+    # STRICT PRIVACY ENFORCEMENT:
+    # Under NO circumstances does the LLM access any paper files, manuscript body text, or journal content.
+    # Pre-screening is strictly and solely evaluated based on the submitted Abstract and metadata (Title, Keywords, Authors).
+    if not title and not abstract:
+        raise ValueError("No title or abstract provided for pre-screening evaluation.")
 
     if job_id:
         update_job(
             job_id,
             percent=22,
-            stage=f"Extracted {len(words)} words ({parse_note}). Sending prompt to {MODEL_NAME}...",
+            stage=f"Evaluating submitted metadata (Title & Abstract) with {MODEL_NAME}...",
         )
 
-    prompt = f"""You are an expert academic editor. Perform a thorough, rigorous AI Pre-Screening of this manuscript.
+    prompt = f"""You are an expert academic editor. Perform a concise, rigorous editorial pre-screening of this manuscript based strictly on its submitted title, abstract, and metadata.
+STRICT PRIVACY POLICY: You have zero access to the full paper, manuscript files, or journal contents. Your pre-screening evaluation is conducted strictly and solely on the basis of the abstract and submitted metadata beyond the paper (Title, Authors, Keywords). Under no circumstances hallucinate or require full body text. Evaluate readiness for peer review based on the submitted research scope, objectives, and abstract.
 Format strictly in Markdown with these EXACT 5 section headers:
 
 ### 1. Scope & Journal Fit
-- 2-3 sentences evaluating fit for high-impact scholarly journals.
+- 2-3 sentences evaluating topic alignment and relevance for peer-reviewed academic publication.
 
 ### 2. Methodological Rigor & Technical Soundness
-- Bullet points detailing strengths and methodological limitations grounded directly in the manuscript text.
+- Bullet points detailing strengths and methodological validity outlined in the abstract and metadata.
 
 ### 3. Novelty & Academic Contribution
-- What makes this research original and significant based on the manuscript.
+- What makes this research significant and original based on the declared objectives and abstract.
 
 ### 4. Critical Flaws / Missing Elements
-- Specific technical gaps, missing controls, or issues requiring revision prior to publication.
+- Potential gaps, missing parameters, or clarifications needed prior to peer review based on the abstract.
 
 ### 5. Recommendation
 - State clearly in bold one of: **PROCEED TO PEER REVIEW**, **MINOR REVISION**, **MAJOR REVISION**, or **DESK REJECT**, followed by a 2-sentence rationale.
 
 ---
-MANUSCRIPT TEXT:
-{distilled_text}
+MANUSCRIPT SUBMISSION METADATA:
+Title: {title or 'Not specified'}
+Authors: {authors or 'Not declared'}
+Keywords: {keywords or 'Not declared'}
+Abstract:
+{abstract or 'No abstract provided'}
 """
 
     def on_tok(tokens: int, partial: str):
@@ -747,7 +743,7 @@ MANUSCRIPT TEXT:
 
     analysis_report, total_tokens = await stream_ollama(
         prompt,
-        options={"temperature": 0.2, "num_predict": 900, "num_ctx": 8192},
+        options={"temperature": 0.2, "num_predict": 900, "num_ctx": 4096},
         on_progress=on_tok,
         timeout=180.0,
     )
@@ -781,8 +777,10 @@ MANUSCRIPT TEXT:
 
 @app.post("/api/analyze/start")
 async def start_analyze_manuscript(payload: AnalyzeRequest):
-    if not os.path.exists(payload.file_path):
+    if payload.file_path and not os.path.exists(payload.file_path):
         raise HTTPException(status_code=404, detail=f"File not found at: {payload.file_path}")
+    if not payload.file_path and not payload.title and not payload.abstract:
+        raise HTTPException(status_code=400, detail="Missing submission metadata (title/abstract) or file path.")
     job_id = create_job("analyze", f"Queued manuscript pre-screening for {MODEL_NAME}...")
 
     async def runner():
@@ -813,6 +811,7 @@ async def evaluate_reviewer_batch_with_llm(
     batch: List[ReviewerItem],
     batch_idx: int,
     total_batches: int,
+    keywords: str = "",
     job_id: Optional[str] = None,
     base_pct: int = 15,
     span_pct: int = 80,
@@ -821,21 +820,24 @@ async def evaluate_reviewer_batch_with_llm(
         f"- ID: {r.id} | Name: {r.name} | Affiliation: {r.affiliation or 'Not listed'} | Active Reviews: {r.active_reviews} | Completed Reviews: {r.completed_reviews} | Declared Interests: {r.interests or 'None declared'}"
         for r in batch
     )
-    prompt = f"""You are an expert academic editorial assistant. Evaluate and rank ALL {len(batch)} candidate peer reviewers below for this manuscript using ONLY the provided metadata.
+    prompt = f"""You are an expert academic editorial assistant. Evaluate and rank ALL {len(batch)} candidate peer reviewers below for this manuscript.
+STRICT PRIVACY POLICY: You have zero access to the journal, full paper body, or manuscript files. Reviewer matchmaking must be conducted strictly and solely on the basis of the knowledge provided by the Abstract and the submitted metadata beyond the paper (Title, Authors, Keywords) matched against each candidate reviewer's declared research interests, expertise, and workload.
 
-MANUSCRIPT:
+MANUSCRIPT METADATA:
 Title: {title}
 Authors: {authors or 'Not listed'}
-Abstract: {abstract}
+Keywords: {keywords or 'Not listed'}
+Abstract:
+{abstract or 'No abstract provided'}
 
 CANDIDATE REVIEWERS (Batch {batch_idx + 1}/{total_batches}):
 {reviewers_list_str}
 
 INSTRUCTIONS:
 1. Evaluate EVERY SINGLE reviewer listed above (total: {len(batch)} reviewers). Do not omit any ID.
-2. Score topical compatibility from 0 to 100 based on their declared interests relative to the manuscript title and abstract.
+2. Score topical compatibility from 0 to 100 based strictly on their declared interests and expertise relative to the manuscript abstract and metadata.
 3. Also consider reviewer workload (active reviews) and any apparent author/affiliation conflict of interest in your reasoning. If a candidate is one of the manuscript authors, assign score 0 and flag the Conflict of Interest clearly.
-4. Provide a concise 1-2 sentence justification specific to each reviewer.
+4. Provide a concise 1-2 sentence justification specific to each reviewer explaining the topical alignment between their declared knowledge and the manuscript abstract.
 5. Output ONLY a raw valid JSON array containing exactly {len(batch)} objects:
 [
   {{
@@ -920,6 +922,7 @@ async def execute_recommend_reviewers(payload: RecommendRequest, job_id: Optiona
             batch,
             b_idx,
             total_batches,
+            keywords=payload.keywords,
             job_id=job_id,
         )
         recommendations.extend(batch_recs)
@@ -937,6 +940,7 @@ async def execute_recommend_reviewers(payload: RecommendRequest, job_id: Optiona
                 missing,
                 b_idx,
                 total_batches,
+                keywords=payload.keywords,
                 job_id=job_id,
             )
             recommendations.extend(retry_recs)
@@ -1033,6 +1037,7 @@ INLINE FEEDBACK TO INCLUDE:
 INSTRUCTIONS:
 - Write a cohesive professional decision/feedback letter addressed to "Dear Author(s),".
 - Preserve every numbered markup item clearly (quoting each manuscript excerpt and the feedback point).
+- STRICT BLIND PEER REVIEW ANONYMIZATION: Under peer-review blinding rules, do NOT mention or reveal any reviewer's real name. Refer to peer reviewers strictly by their assigned role (e.g. "Reviewer 1", "Reviewer 2").
 - Conclude with clear revision and point-by-point response instructions signed by {payload.editor_name}.
 - Output ONLY the plain-text email letter ready to send.
 """
@@ -1045,6 +1050,38 @@ INSTRUCTIONS:
         return {"success": True, "letter": letter_text, "model": MODEL_NAME, "tokens": tokens}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM letter generation failed: {str(e)}")
+
+
+@app.post("/api/send_author_letter")
+async def send_author_letter_api(payload: SendAuthorLetterRecord):
+    if not payload.letter.strip():
+        raise HTTPException(status_code=400, detail="Letter content is empty.")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        INSERT INTO author_letters (submission_id, source_label, editor_name, letter, sent_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (payload.submission_id, payload.source_label, payload.editor_name, payload.letter, now_str))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "Letter recorded and dispatched to author.", "sent_at": now_str}
+
+
+@app.get("/api/author_letters")
+async def get_author_letters_api(submission_id: int = Query(...)):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, submission_id, source_label, editor_name, letter, sent_at
+        FROM author_letters
+        WHERE submission_id = ?
+        ORDER BY id DESC
+    """, (submission_id,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return {"success": True, "letters": rows}
 
 
 @app.post("/api/draft_release_letter")

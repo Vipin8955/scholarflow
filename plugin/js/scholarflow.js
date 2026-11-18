@@ -21,6 +21,7 @@
     window.__sfSaveAnnotation = saveAnnotation;
     window.__sfDeleteAnnotation = deleteAnnotation;
     window.__sfExportMarkups = exportMarkups;
+    window.__sfSyncReviewToStep3 = syncReviewFromScholarFlowToOjs;
     window.__sfScrollToAnnotation = scrollToAnnotation;
     window.__sfLoadAnnotations = loadAnnotations;
     window.__sfRenderAnnotationsList = renderAnnotationsList;
@@ -58,25 +59,69 @@
         var ul = document.querySelector('ul.listPanel__itemsList, .listPanel__itemsList, ul');
         if (ul) sortReviewersByMatchScore(ul);
     };
+    function findSelectReviewerRowAndButton(reviewerName) {
+        var targetName = (reviewerName || '').trim().toLowerCase();
+        if (!targetName) return null;
+        var panels = document.querySelectorAll(
+            '.listPanel--selectReviewer, .pkpListPanel--selectReviewer, [class*="selectReviewer"], .pkpSelectReviewerListPanel, [role="dialog"] .listPanel, [role="dialog"] .pkpListPanel, .pkp_modal_panel .listPanel'
+        );
+        for (var p = 0; p < panels.length; p++) {
+            var items = panels[p].querySelectorAll('li.listPanel__item, .listPanel__item--reviewer, li.pkpListPanelItem, .pkpListPanelItem--selectReviewer, li');
+            for (var i = 0; i < items.length; i++) {
+                var title = items[i].querySelector('.listPanel__itemTitle, .pkpListPanelItem__title, [class*="itemTitle"], h4, h3');
+                if (title && title.textContent.toLowerCase().indexOf(targetName) !== -1) {
+                    var btn = items[i].querySelector('.listPanel__itemActions button, .pkpListPanelItem__actions button');
+                    if (!btn) {
+                        var btns = items[i].querySelectorAll('button');
+                        for (var b = 0; b < btns.length; b++) {
+                            if ((btns[b].textContent || '').toLowerCase().indexOf('select reviewer') !== -1) {
+                                btn = btns[b];
+                                break;
+                            }
+                        }
+                    }
+                    return { item: items[i], btn: btn };
+                }
+            }
+        }
+        return null;
+    }
+
     window.__sfAssignReviewerInOJS = function(reviewerName) {
-        sfClose();
-        setTimeout(function() {
-            var panel = document.querySelector('.listPanel--selectReviewer, .listPanel, .pkpListPanel--selectReviewer, [class*="selectReviewer"]');
-            if (panel) {
-                var items = panel.querySelectorAll('li.listPanel__item, .listPanel__item--reviewer, li.pkpListPanelItem, .pkpListPanelItem--selectReviewer, li');
-                for (var i = 0; i < items.length; i++) {
-                    var title = items[i].querySelector('.listPanel__itemTitle, .pkpListPanelItem__title, [class*="itemTitle"], h4, h3');
-                    if (title && title.textContent.toLowerCase().indexOf(reviewerName.toLowerCase()) !== -1) {
-                        items[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        items[i].style.outline = '3px solid #4f46e5';
-                        items[i].style.borderRadius = '8px';
-                        var btn = items[i].querySelector('.listPanel__itemActions button, .pkpListPanelItem__actions button, button.pkpButton');
-                        if (btn) btn.click();
-                        break;
+        var match = findSelectReviewerRowAndButton(reviewerName);
+        if (!match) {
+            var sid = getSubmissionId();
+            var targetBase = getContextBase();
+            if (sid && typeof cachedSubmissionsList !== 'undefined' && cachedSubmissionsList.length) {
+                var sub = cachedSubmissionsList.find(function(s) { return String(s.id) === String(sid); });
+                if (sub && sub.journalPath) {
+                    var idxPos = targetBase.indexOf('/index.php/');
+                    if (idxPos !== -1) {
+                        targetBase = targetBase.substring(0, idxPos + 11) + sub.journalPath;
                     }
                 }
             }
-        }, 350);
+            if (sid && targetBase) {
+                window.location.href = targetBase + '/dashboard/editorial?currentViewId=active&workflowSubmissionId=' + encodeURIComponent(sid);
+                return;
+            }
+            alert('Please open the submission\'s "Add Reviewer" panel in OJS first, then click "Assign Reviewer".');
+            return;
+        }
+        window.__sfClosingTimestamp = Date.now();
+        sfClose();
+        setTimeout(function() {
+            window.__sfClosingTimestamp = Date.now();
+            var freshMatch = findSelectReviewerRowAndButton(reviewerName) || match;
+            if (freshMatch && freshMatch.item) {
+                freshMatch.item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                freshMatch.item.style.outline = '3px solid #0f172a';
+                freshMatch.item.style.borderRadius = '8px';
+                if (freshMatch.btn && typeof freshMatch.btn.click === 'function') {
+                    freshMatch.btn.click();
+                }
+            }
+        }, 120);
     };
 
     var currentSubmissionId = '1';
@@ -175,13 +220,16 @@
         autoPrefetchOpenSubmissionMatchmaking();
         injectNativeReviewerMatchmaking();
         simplifyOjsUi();
+        rebrandUiToScholarFlow();
         setInterval(function () {
             ensureButton();
             injectNativeOJSButtons();
+            injectReviewerStep3Sync();
             autoPrefetchOpenSubmissionMatchmaking();
             injectNativeReviewerMatchmaking();
             simplifyOjsUi();
-        }, 800);
+            rebrandUiToScholarFlow();
+        }, 600);
 
         if (window.MutationObserver && !window.__sfObserverInitialized) {
             window.__sfObserverInitialized = true;
@@ -235,6 +283,13 @@
                     }, 1000);
                 }
             }
+
+            // Close journal picker dropdown on outside click
+            var menu = document.getElementById('sfJournalPickerMenu');
+            var pickerBtn = document.getElementById('sfJournalPickerBtn');
+            if (menu && menu.style.display !== 'none' && !menu.contains(e.target) && (!pickerBtn || !pickerBtn.contains(e.target))) {
+                menu.style.display = 'none';
+            }
         }, true);
     }
 
@@ -256,10 +311,18 @@
             }
         }
 
-        if (targetContainer && !document.getElementById('sfNativeWorkflowActionsWrap')) {
+        // Reviewer Submission Page (/reviewer/submission/{id} or /reviewer/step/{id})
+        var reviewerTabs = !targetContainer ? document.getElementById('reviewTabs') : null;
+        var pageHeading = (!targetContainer && !reviewerTabs && window.location.pathname.indexOf('/reviewer/') !== -1)
+            ? document.querySelector('h1.app__pageHeading')
+            : null;
+
+        if ((targetContainer || reviewerTabs || pageHeading) && !document.getElementById('sfNativeWorkflowActionsWrap')) {
             var actionsWrap = document.createElement('div');
             actionsWrap.id = 'sfNativeWorkflowActionsWrap';
-            actionsWrap.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-left:8px;vertical-align:middle;';
+            actionsWrap.style.cssText = targetContainer
+                ? 'display:inline-flex;align-items:center;gap:8px;margin-left:8px;vertical-align:middle;'
+                : 'display:flex;align-items:center;gap:10px;margin:0 0 14px 0;flex-wrap:wrap;';
 
             var readerBtn = document.createElement('button');
             readerBtn.id = 'sfNativeWorkflowReaderBtn';
@@ -269,8 +332,8 @@
                 'display:inline-flex !important',
                 'align-items:center !important',
                 'gap:6px !important',
-                'background:linear-gradient(135deg, #4f46e5, #4338ca) !important',
-                'border:1px solid #3730a3 !important',
+                'background:#0f172a !important',
+                'border:1px solid #1e293b !important',
                 'color:#ffffff !important',
                 'font-weight:700 !important',
                 'font-size:12px !important',
@@ -298,18 +361,21 @@
                 'display:inline-flex !important',
                 'align-items:center !important',
                 'gap:6px !important',
-                'background:#eff6ff !important',
-                'border:1px solid #bfdbfe !important',
+                'background:rgba(239, 246, 255, 0.75) !important',
+                'backdrop-filter:blur(8px) !important',
+                '-webkit-backdrop-filter:blur(8px) !important',
+                'border:1px solid rgba(191, 219, 254, 0.85) !important',
                 'color:#1d4ed8 !important',
                 'font-weight:700 !important',
                 'font-size:12px !important',
                 'padding:7px 14px !important',
-                'border-radius:6px !important',
+                'border-radius:8px !important',
+                'box-shadow:0 2px 8px rgba(29, 78, 216, 0.08) !important',
                 'cursor:pointer !important',
                 'vertical-align:middle !important',
-                'transition:all 0.2s ease !important'
+                'transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important'
             ].join(';');
-            aiBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>AI Pre-Screening</span>';
+            aiBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>Pre-Screening</span>';
             aiBtn.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -320,56 +386,118 @@
 
             actionsWrap.appendChild(readerBtn);
             actionsWrap.appendChild(aiBtn);
-            targetContainer.appendChild(actionsWrap);
+            if (targetContainer) {
+                targetContainer.appendChild(actionsWrap);
+            } else if (reviewerTabs && reviewerTabs.parentNode) {
+                reviewerTabs.parentNode.insertBefore(actionsWrap, reviewerTabs);
+            } else if (pageHeading && pageHeading.parentNode) {
+                pageHeading.parentNode.insertBefore(actionsWrap, pageHeading.nextSibling);
+            }
         }
 
-        // 2. Primary Navigation Menu in OJS Backend Header
-        var navMenu = document.querySelector('#navigationPrimary, .pkp_navigation_primary, .pkpNav__menu');
-        if (navMenu && !document.getElementById('sfNativeNavLi')) {
-            var li = document.createElement('li');
-            li.id = 'sfNativeNavLi';
-            li.className = 'pkpNav__item scholarflow-nav-item';
-            li.style.cssText = 'display:inline-block;margin-left:8px;vertical-align:middle;';
-            li.innerHTML = '<a href="#" class="pkpNav__link" style="display:inline-flex;align-items:center;gap:6px;font-weight:700;color:#4f46e5 !important;padding:8px 12px;border-radius:6px;background:rgba(99,102,241,0.08);text-decoration:none;"><span style="font-size:13px">🤖</span> <span>ScholarFlow AI</span></a>';
-            li.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.__sfOpen(sid || currentSubmissionId || '1');
-            };
-            navMenu.appendChild(li);
-        }
+        // 2. Direct In-Table Paper Action Buttons on Submissions List
+        var strayNav = document.getElementById('sfNativeNavLi');
+        if (strayNav && strayNav.parentNode) strayNav.parentNode.removeChild(strayNav);
+        var strayDash = document.getElementById('sfNativeDashboardBtn');
+        if (strayDash && strayDash.parentNode) strayDash.parentNode.removeChild(strayDash);
 
-        // 3. Editorial Dashboard List Panel Toolbar
-        var dashTools = document.querySelector('.pkpListPanel__tools, .submissionsListPanel .pkpHeader, .pkpListPanel .pkpHeader__actions');
-        if (dashTools && !document.getElementById('sfNativeDashboardBtn')) {
-            var dashBtn = document.createElement('button');
-            dashBtn.id = 'sfNativeDashboardBtn';
-            dashBtn.className = 'pkp_button scholarflow-dashboard-btn';
-            dashBtn.type = 'button';
-            dashBtn.style.cssText = [
-                'margin-left: 8px !important',
-                'display: inline-flex !important',
-                'align-items: center !important',
-                'gap: 6px !important',
-                'background: #eef2ff !important',
-                'border: 1px solid #c7d2fe !important',
-                'color: #4338ca !important',
-                'font-weight: 700 !important',
-                'font-size: 12px !important',
-                'padding: 6px 12px !important',
-                'border-radius: 6px !important',
-                'cursor: pointer !important',
-                'vertical-align: middle !important',
-                'transition: all 0.2s ease !important'
+        injectPaperRowActions();
+    }
+
+    // ── Inject Direct Action Buttons (Markups, Pre-Screen) Per Paper Row ───
+    function injectPaperRowActions() {
+        var rows = document.querySelectorAll('table tbody tr, .pkpTable tbody tr, .app__page table tbody tr');
+        if (!rows || rows.length === 0) return;
+
+        rows.forEach(function (row) {
+            if (row.querySelector('.sf-row-actions')) return;
+
+            var sid = '';
+            var cells = row.querySelectorAll('td');
+            if (!cells || cells.length === 0) return;
+
+            // Extract ID from first column
+            var idText = cells[0].textContent.trim();
+            if (/^\d+$/.test(idText)) {
+                sid = idText;
+            }
+
+            if (!sid) {
+                var anyLink = row.querySelector('a[href*="workflowSubmissionId="], a[href*="submissionId="], a[href*="workflow/index/"], a[href*="workflow/access/"]');
+                if (anyLink) {
+                    var m = anyLink.href.match(/(?:workflowSubmissionId=|submissionId=|workflow\/(?:index|access)\/)(\d+)/);
+                    if (m) sid = m[1];
+                }
+            }
+
+            if (!sid) return;
+
+            // Actions cell is the last column
+            var actionsCell = cells[cells.length - 1];
+            if (!actionsCell) return;
+
+            var wrap = document.createElement('div');
+            wrap.className = 'sf-row-actions';
+            wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;';
+
+            // 1. Markups Button (opens Document & Markups for this specific paper)
+            var markupsBtn = document.createElement('button');
+            markupsBtn.type = 'button';
+            markupsBtn.className = 'sf-row-btn sf-row-btn-markup';
+            markupsBtn.style.cssText = [
+                'display:inline-flex !important',
+                'align-items:center !important',
+                'gap:4px !important',
+                'background:#0f172a !important',
+                'color:#ffffff !important',
+                'border:1px solid #0f172a !important',
+                'border-radius:6px !important',
+                'padding:6px 11px !important',
+                'font-size:12px !important',
+                'font-weight:600 !important',
+                'cursor:pointer !important',
+                'line-height:1.2 !important',
+                'transition:background 0.15s ease !important'
             ].join(';');
-            dashBtn.innerHTML = '<span style="font-size:13px">🤖</span> <span>ScholarFlow AI Hub</span>';
-            dashBtn.onclick = function(e) {
+            markupsBtn.innerHTML = '<span>📖</span><span>Markups</span>';
+            markupsBtn.title = 'Open Document Reader & Review Markups for Submission #' + sid;
+            markupsBtn.onclick = function (e) {
                 e.preventDefault();
                 e.stopPropagation();
-                window.__sfOpen(sid || currentSubmissionId || '1');
+                window.__sfOpenInScreenReader(sid, 'viewer');
             };
-            dashTools.appendChild(dashBtn);
-        }
+
+            // 2. Pre-Screen Button (evaluates this specific paper)
+            var prescreenBtn = document.createElement('button');
+            prescreenBtn.type = 'button';
+            prescreenBtn.className = 'sf-row-btn sf-row-btn-prescreen';
+            prescreenBtn.style.cssText = [
+                'display:inline-flex !important',
+                'align-items:center !important',
+                'gap:4px !important',
+                'background:#ffffff !important',
+                'color:#334155 !important',
+                'border:1px solid #cbd5e1 !important',
+                'border-radius:6px !important',
+                'padding:6px 11px !important',
+                'font-size:12px !important',
+                'font-weight:600 !important',
+                'cursor:pointer !important',
+                'line-height:1.2 !important',
+                'transition:all 0.15s ease !important'
+            ].join(';');
+            prescreenBtn.innerHTML = '<span>📋</span><span>Pre-Screen</span>';
+            prescreenBtn.title = 'Open Manuscript Pre-Screening Evaluation for Submission #' + sid;
+            prescreenBtn.onclick = function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.__sfOpenInScreenReader(sid, 'prescreen');
+            };
+
+            wrap.appendChild(markupsBtn);
+            wrap.appendChild(prescreenBtn);
+            actionsCell.appendChild(wrap);
+        });
     }
 
     // ── Native OJS Reviewer Matchmaking Integration ───────────────────────
@@ -574,6 +702,219 @@
         return /\/workflow\/(?:index|access)\/(\d+)/i.test(full) || /[?&]workflowSubmissionId=(\d+)/i.test(full);
     }
 
+    // ── Reviewer Step 3 Form Integration: "Get Review from ScholarFlow" ───
+    function injectReviewerStep3Sync() {
+        var commentsArea = document.getElementById('comments') || document.querySelector('textarea[name="comments"]');
+        if (!commentsArea && typeof tinymce !== 'undefined') {
+            try {
+                var ed = tinymce.get('comments');
+                if (ed && ed.getElement()) commentsArea = ed.getElement();
+            } catch (_) {}
+        }
+        if (!commentsArea) return;
+        if (document.getElementById('sfStep3SyncWrap')) return;
+
+        var targetContainer = commentsArea.closest('.fbvFormSection, .pkp_form_section, .pkp_form, form') || commentsArea.parentElement;
+        if (!targetContainer) return;
+
+        var sid = getActiveReviewerModalSubmissionId() || getSubmissionId() || currentSubmissionId || '1';
+
+        var banner = document.createElement('div');
+        banner.id = 'sfStep3SyncWrap';
+        banner.style.cssText = [
+            'background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%)',
+            'border: 1px solid #c7d2fe',
+            'border-radius: 12px',
+            'padding: 16px 20px',
+            'margin: 0 0 20px 0',
+            'display: flex',
+            'align-items: center',
+            'justify-content: space-between',
+            'gap: 16px',
+            'box-shadow: 0 4px 14px rgba(79, 70, 229, 0.08)',
+            'font-family: inherit'
+        ].join(';');
+
+        banner.innerHTML = [
+            '<div style="display:flex;align-items:center;gap:14px">',
+            '  <div style="width:40px;height:40px;border-radius:10px;background:#0f172a;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;box-shadow:0 3px 10px rgba(79,70,229,0.3);flex-shrink:0">✨</div>',
+            '  <div>',
+            '    <div style="font-size:14px;font-weight:800;color:#1e1b4b;display:flex;align-items:center;gap:8px">',
+            '      <span>ScholarFlow Review Integration</span>',
+            '      <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe">1-Click Auto-Fill</span>',
+            '    </div>',
+            '    <div style="font-size:12px;color:#475569;margin-top:3px;line-height:1.4">',
+            '      Reviewed in ScholarFlow? Click below to instantly import all your inline markups and confidential notes into this official review form.',
+            '    </div>',
+            '  </div>',
+            '</div>',
+            '<div style="display:flex;align-items:center;gap:10px;flex-shrink:0">',
+            '  <button id="sfSyncToStep3Btn" type="button" class="pkp_button" style="display:inline-flex !important;align-items:center !important;gap:6px !important;background:#0f172a !important;color:#ffffff !important;border:none !important;padding:9px 18px !important;border-radius:8px !important;font-size:12px !important;font-weight:700 !important;cursor:pointer !important;box-shadow:0 2px 6px rgba(79,70,229,0.3) !important;transition:all 0.15s ease !important">',
+            '    <span style="font-size:14px">📥</span> <span>Get Review from ScholarFlow</span>',
+            '  </button>',
+            '</div>'
+        ].join('');
+
+        targetContainer.parentNode.insertBefore(banner, targetContainer);
+
+        var syncBtn = document.getElementById('sfSyncToStep3Btn');
+        if (syncBtn) {
+            syncBtn.onclick = function(e) {
+                e.preventDefault();
+                syncReviewFromScholarFlowToOjs(sid, syncBtn);
+            };
+        }
+    }
+
+    function syncReviewFromScholarFlowToOjs(sid, btn) {
+        if (!sid) sid = getActiveReviewerModalSubmissionId() || getSubmissionId() || currentSubmissionId || '1';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Fetching markups...';
+        }
+
+        fetch(getContextBase() + '/scholarflow/annotations?submissionId=' + encodeURIComponent(sid), { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var annotations = (data && data.annotations) ? data.annotations : [];
+                if (!annotations.length) {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = '⚠️ No comments found in ScholarFlow';
+                        setTimeout(function() {
+                            btn.innerHTML = '<span style="font-size:14px">📥</span> <span>Get Review from ScholarFlow</span>';
+                        }, 2500);
+                    }
+                    alert('No inline comments were found in ScholarFlow for this paper. Please open the "In-Screen Manuscript Reader" and highlight text to add your review feedback first!');
+                    return;
+                }
+
+                var publicComments = [];
+                var privateNotes = [];
+
+                annotations.forEach(function(a) {
+                    var isConf = !!a.confidential_to_editor || a.channel === 'reviewer_to_editor' || a.is_confidential;
+                    if (isConf) {
+                        privateNotes.push(a);
+                    } else {
+                        publicComments.push(a);
+                    }
+                });
+
+                // Format Public Comments HTML
+                var pubHtml = '';
+                if (publicComments.length) {
+                    pubHtml += '<h3>ScholarFlow In-Screen Review Markups</h3>';
+                    pubHtml += '<p><em>Detailed manuscript feedback comments recorded during in-screen evaluation:</em></p>';
+                    pubHtml += '<ol>';
+                    publicComments.forEach(function(a) {
+                        var excerpt = (a.selected_text || '').trim();
+                        var comment = (a.comment || '').trim();
+                        var colorTag = a.color ? (' <span style="font-size:10px;text-transform:uppercase;color:#0f172a">[' + a.color + ']</span>') : '';
+                        pubHtml += '<li style="margin-bottom:10px;">';
+                        if (excerpt) {
+                            pubHtml += '<strong>Excerpt:</strong> <em>&ldquo;' + esc(excerpt) + '&rdquo;</em>' + colorTag + '<br/>';
+                        }
+                        pubHtml += '<strong>Feedback:</strong> ' + esc(comment);
+                        pubHtml += '</li>';
+                    });
+                    pubHtml += '</ol>';
+                }
+
+                // Format Private Notes HTML
+                var privHtml = '';
+                if (privateNotes.length) {
+                    privHtml += '<h3>Confidential Notes for Editor (via ScholarFlow)</h3>';
+                    privHtml += '<p><em>Private reviewer observations:</em></p>';
+                    privHtml += '<ol>';
+                    privateNotes.forEach(function(a) {
+                        var excerpt = (a.selected_text || '').trim();
+                        var comment = (a.comment || '').trim();
+                        privHtml += '<li style="margin-bottom:10px;">';
+                        if (excerpt) {
+                            privHtml += '<strong>Excerpt:</strong> <em>&ldquo;' + esc(excerpt) + '&rdquo;</em><br/>';
+                        }
+                        privHtml += '<strong>Note for Editor:</strong> ' + esc(comment);
+                        privHtml += '</li>';
+                    });
+                    privHtml += '</ol>';
+                }
+
+                // Insert into comments (For author & editor)
+                var insertedPublic = false;
+                try {
+                    if (typeof tinymce !== 'undefined') {
+                        var edPub = tinymce.get('comments');
+                        if (edPub) {
+                            var cur = edPub.getContent();
+                            edPub.setContent(cur ? (cur + '<hr/>' + pubHtml) : pubHtml);
+                            insertedPublic = true;
+                        }
+                    }
+                } catch (_) {}
+                if (!insertedPublic) {
+                    var taPub = document.getElementById('comments') || document.querySelector('textarea[name="comments"]');
+                    if (taPub) {
+                        var pubText = pubHtml.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '');
+                        taPub.value = taPub.value ? (taPub.value + '\n\n' + pubText) : pubText;
+                        taPub.dispatchEvent(new Event('input', { bubbles: true }));
+                        taPub.dispatchEvent(new Event('change', { bubbles: true }));
+                        insertedPublic = true;
+                    }
+                }
+
+                // Insert into commentsPrivate (For editor only)
+                var insertedPrivate = false;
+                if (privHtml) {
+                    try {
+                        if (typeof tinymce !== 'undefined') {
+                            var edPriv = tinymce.get('commentsPrivate');
+                            if (edPriv) {
+                                var curP = edPriv.getContent();
+                                edPriv.setContent(curP ? (curP + '<hr/>' + privHtml) : privHtml);
+                                insertedPrivate = true;
+                            }
+                        }
+                    } catch (_) {}
+                    if (!insertedPrivate) {
+                        var taPriv = document.getElementById('commentsPrivate') || document.querySelector('textarea[name="commentsPrivate"]');
+                        if (taPriv) {
+                            var privText = privHtml.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n\n').replace(/<[^>]+>/g, '');
+                            taPriv.value = taPriv.value ? (taPriv.value + '\n\n' + privText) : privText;
+                            taPriv.dispatchEvent(new Event('input', { bubbles: true }));
+                            taPriv.dispatchEvent(new Event('change', { bubbles: true }));
+                            insertedPrivate = true;
+                        }
+                    }
+                }
+
+                if (btn) {
+                    btn.disabled = false;
+                    btn.style.setProperty('background', '#059669', 'important');
+                    btn.innerHTML = '✅ Synced ' + annotations.length + ' Markups!';
+                    setTimeout(function() {
+                        btn.style.setProperty('background', '#0f172a', 'important');
+                        btn.innerHTML = '<span style="font-size:14px">📥</span> <span>Get Review from ScholarFlow</span>';
+                    }, 3500);
+                }
+
+                var scrollTarget = document.getElementById('comments') || document.getElementById('sfStep3SyncWrap');
+                if (scrollTarget) {
+                    scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            })
+            .catch(function(err) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '❌ Sync Failed';
+                    setTimeout(function() {
+                        btn.innerHTML = '<span style="font-size:14px">📥</span> <span>Get Review from ScholarFlow</span>';
+                    }, 2000);
+                }
+                alert('Could not sync markups from ScholarFlow: ' + err.message);
+            });
+    }
+
     // ── Native In-Workflow AI Pre-Screening & Quality Audit Card ─────────
     function injectNativeWorkflowCard(explicitSid) {
         // Complete clean workflow: No intrusive cards on top of OJS pages on start!
@@ -586,93 +927,12 @@
     var _sfDashboardStatusFetching = false;
 
     function injectNativeDashboardBadges() {
-        var items = document.querySelectorAll(
-            '.submissionsListPanel li.listPanel__item, .pkpListPanelItem, tr.pkpTable__row, .listPanel__item'
-        );
-        if (!items || items.length === 0) return;
-
-        var pendingIds = [];
-        var rowsToUpdate = [];
-
-        items.forEach(function(item) {
-            var link = item.querySelector('a[href*="workflowSubmissionId"], a[href*="/workflow/index/"], a[href*="/workflow/access/"], a[href*="/submission/"]');
-            var subId = null;
-            if (link && link.href) {
-                var m = link.href.match(/[?&]workflowSubmissionId=(\d+)/) || link.href.match(/\/workflow\/(?:index|access)\/(\d+)/) || link.href.match(/\/submission\/(\d+)/);
-                if (m) subId = m[1];
-            }
-            if (!subId) {
-                var idCell = item.querySelector('.pkpTable__cell--id, [class*="cell--id"]');
-                if (idCell && /^\d+$/.test(idCell.textContent.trim())) {
-                    subId = idCell.textContent.trim();
-                }
-            }
-            if (!subId) return;
-
-            if (!_sfDashboardStatusCache[subId] && pendingIds.indexOf(subId) === -1) {
-                pendingIds.push(subId);
-            }
-            rowsToUpdate.push({ item: item, subId: subId });
-        });
-
-        function renderBadgeForRow(item, subId, st) {
-            var titleEl = item.querySelector('.listPanel__itemTitle, .pkpListPanelItem__title, [class*="itemTitle"], td.pkpTable__cell--title, h4, h3');
-            if (!titleEl) return;
-            var badge = item.querySelector('.sf-dash-ai-badge');
-            if (!badge) {
-                badge = document.createElement('span');
-                badge.className = 'sf-dash-ai-badge';
-                badge.style.cursor = 'pointer';
-                titleEl.appendChild(badge);
-            }
-            var verdict = st && st.verdict ? st.verdict : 'NOT SCREENED';
-            if (st && st.screened) {
-                badge.innerHTML = '🤖 LLM (' + esc(st.model || 'AI') + '): <strong>' + esc(verdict) + '</strong>';
-                badge.title = 'Click to view full AI pre-screening report';
-                if (verdict.indexOf('ACCEPT') !== -1 || verdict.indexOf('PROCEED') !== -1) {
-                    badge.style.background = '#dcfce7'; badge.style.color = '#15803d'; badge.style.borderColor = '#86efac';
-                } else if (verdict.indexOf('REJECT') !== -1) {
-                    badge.style.background = '#fee2e2'; badge.style.color = '#b91c1c'; badge.style.borderColor = '#fca5a5';
-                } else {
-                    badge.style.background = '#fef3c7'; badge.style.color = '#b45309'; badge.style.borderColor = '#fde68a';
-                }
-            } else {
-                badge.innerHTML = '🤖 AI: <strong>Click to Screen</strong>';
-                badge.title = 'No LLM pre-screening cached yet — click to run real-time LLM screening';
-                badge.style.background = '#f1f5f9'; badge.style.color = '#475569'; badge.style.borderColor = '#cbd5e1';
-            }
-            badge.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                openInScreenReader(subId, 'prescreen');
-            };
-        }
-
-        rowsToUpdate.forEach(function(r) {
-            if (_sfDashboardStatusCache[r.subId] && !r.item.querySelector('.sf-dash-ai-badge')) {
-                renderBadgeForRow(r.item, r.subId, _sfDashboardStatusCache[r.subId]);
-            }
-        });
-
-        if (pendingIds.length > 0 && !_sfDashboardStatusFetching) {
-            _sfDashboardStatusFetching = true;
-            fetch(getContextBase() + '/scholarflow/dashboardStatuses?submissionIds=' + encodeURIComponent(pendingIds.join(',')), { credentials: 'same-origin' })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    _sfDashboardStatusFetching = false;
-                    if (data && data.statuses) {
-                        Object.keys(data.statuses).forEach(function(k) {
-                            _sfDashboardStatusCache[k] = data.statuses[k];
-                        });
-                        rowsToUpdate.forEach(function(r) {
-                            if (_sfDashboardStatusCache[r.subId]) {
-                                renderBadgeForRow(r.item, r.subId, _sfDashboardStatusCache[r.subId]);
-                            }
-                        });
-                    }
-                })
-                .catch(function() { _sfDashboardStatusFetching = false; });
-        }
+        try {
+            var badges = document.querySelectorAll('.sf-dash-ai-badge, .sf-ojs-match-badge, .sf-ojs-loading-badge');
+            badges.forEach(function(b) {
+                if (b && b.parentNode) b.parentNode.removeChild(b);
+            });
+        } catch (_) {}
     }
     
 
@@ -742,18 +1002,18 @@ function injectNativeReviewerMatchmaking(force) {
                 '<div style="display:flex;align-items:center;gap:12px">',
                 '  <span style="font-size:22px">🤖</span>',
                 '  <div>',
-                '    <div style="font-size:13px;font-weight:800;color:#1e1b4b;display:flex;align-items:center;gap:8px">',
+                '    <div style="font-size:13px;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:8px">',
                 '      <span>ScholarFlow AI Reviewer Matchmaking</span>',
-                '      <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#4f46e5;color:#fff">Submission #' + sid + '</span>',
+                '      <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;background:#0f172a;color:#fff">Submission #' + sid + '</span>',
                 '    </div>',
                 '    <div id="sfNativeMatchStatus" style="font-size:12px;color:#475569;margin-top:2px">',
-                '      Live LLM reviewer compatibility &amp; conflict evaluation below. Click <strong>Select Reviewer</strong> to assign.',
+                '      Abstract &amp; metadata matchmaking. Zero paper or journal files accessed. Click <strong>Select Reviewer</strong> to assign.',
                 '    </div>',
                 '  </div>',
                 '</div>',
                 '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">',
                 '  <button id="sfSortReviewersBtn" type="button" class="pkp_button" style="background:#f0fdf4 !important;border:1px solid #86efac !important;color:#166534 !important;font-weight:700 !important;font-size:11px !important;padding:6px 12px !important;border-radius:6px !important;cursor:pointer !important;display:inline-flex !important;align-items:center !important;gap:4px !important">⚡ Sort Best Match First</button>',
-                '  <button id="sfReanalyzeMatchBtn" type="button" class="pkp_button" style="background:#4f46e5 !important;border:none !important;color:#ffffff !important;font-weight:700 !important;font-size:11px !important;padding:6px 12px !important;border-radius:6px !important;cursor:pointer !important;display:inline-flex !important;align-items:center !important;gap:4px !important">🔄 Refresh AI</button>',
+                '  <button id="sfReanalyzeMatchBtn" type="button" class="pkp_button" style="background:#0f172a !important;border:none !important;color:#ffffff !important;font-weight:700 !important;font-size:11px !important;padding:6px 12px !important;border-radius:6px !important;cursor:pointer !important;display:inline-flex !important;align-items:center !important;gap:4px !important">🔄 Refresh AI</button>',
                 '</div>'
             ].join('');
 
@@ -959,7 +1219,7 @@ function injectNativeReviewerMatchmaking(force) {
                     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">',
                     '  <div style="display:flex;align-items:center;gap:6px;font-weight:800;color:#1e1b4b;font-size:12px">',
                     '    <span>🎯 ScholarFlow AI Match Analysis:</span>',
-                    '    <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:#e0e7ff;color:#3730a3">AI Evaluated</span>',
+                    '    <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:#e0e7ff;color:#1e293b">AI Evaluated</span>',
                     '  </div>',
                     '  <span style="font-size:12px;font-weight:800;color:' + (score >= 80 ? '#15803d' : '#475569') + '">' + score + '% Compatibility</span>',
                     '</div>',
@@ -992,27 +1252,17 @@ function injectNativeReviewerMatchmaking(force) {
         }
         if (!itemsList) return;
 
+        itemsList.style.display = 'flex';
+        itemsList.style.flexDirection = 'column';
+
         var items = Array.prototype.slice.call(itemsList.children).filter(function(el) {
             return el.tagName === 'LI';
         });
         if (items.length <= 1) return;
 
-        items.sort(function(a, b) {
-            var scoreA = parseInt(a.getAttribute('data-sf-match-score') || '0', 10);
-            var scoreB = parseInt(b.getAttribute('data-sf-match-score') || '0', 10);
-            return scoreB - scoreA;
-        });
-
-        var currentOrder = Array.prototype.slice.call(itemsList.children).filter(function(el) {
-            return el.tagName === 'LI';
-        });
-        var alreadySorted = items.length === currentOrder.length && items.every(function(item, idx) {
-            return currentOrder[idx] === item;
-        });
-        if (alreadySorted) return;
-
         items.forEach(function(item) {
-            itemsList.appendChild(item);
+            var score = parseInt(item.getAttribute('data-sf-match-score') || '0', 10);
+            item.style.order = String(1000 - score);
         });
     }
 
@@ -1077,6 +1327,15 @@ function injectNativeReviewerMatchmaking(force) {
         var tabPre         = document.getElementById('sfTabPreScreen');
         var tabRec         = document.getElementById('sfTabRecReviewers');
         var badge          = document.getElementById('sfUserRoleBadge');
+        var exportBtn      = document.getElementById('sfExportMarkupsBtn');
+        var sideTitle      = document.getElementById('sfSidebarTitleText');
+        var countBadge     = document.getElementById('sfCommentsCountBadge');
+        var tabEd          = document.getElementById('sfCommentTab-editor');
+        var tabR2E         = document.getElementById('sfCommentTab-reviewer_to_editor');
+        var tabRev         = document.getElementById('sfCommentTab-reviewer');
+        var subRevWrap     = document.getElementById('sfReviewerSubFilterWrap');
+        var tabAuth        = document.getElementById('sfCommentTab-author_letters');
+        var docHint        = document.getElementById('sfDocToolbarHintText');
 
         if (badge) {
             badge.textContent = currentUserInfo.displayRole || 'User';
@@ -1095,24 +1354,74 @@ function injectNativeReviewerMatchmaking(force) {
             }
         }
 
-        if (isEditor) {
-            // Editors: full access to Pre-Screening and Reviewer Matchmaking
+        if (isAuthorOnly) {
+            // Authors: Strictly view finalized editorial decision letters and clean manuscript view
+            if (tabPre) tabPre.style.display = 'none';
+            if (tabRec) tabRec.style.display = 'none';
+            if (exportBtn) exportBtn.style.display = 'none';
+            if (sideTitle) sideTitle.textContent = 'Editorial Letters & Decisions';
+            if (countBadge) countBadge.style.display = 'none';
+            if (tabEd) tabEd.style.display = 'none';
+            if (tabR2E) tabR2E.style.display = 'none';
+            if (tabRev) tabRev.style.display = 'none';
+            if (subRevWrap) subRevWrap.style.display = 'none';
+            if (tabAuth) {
+                tabAuth.style.display = 'flex';
+                tabAuth.style.flex = '1';
+                tabAuth.style.justifyContent = 'center';
+            }
+            if (docHint) {
+                docHint.innerHTML = '<span style="color:#3b82f6">📄</span> Manuscript View &bull; Review official editorial decision letters in the right panel';
+            }
+            currentCommentFilter = 'author_letters';
+            var activeTab = document.querySelector('.sf-tab-btn.active');
+            if (activeTab && activeTab.id !== 'sfTabViewer') {
+                switchTab('viewer');
+            }
+        } else if (isEditor) {
+            // Editors: full access to Pre-Screening, Matchmaking, Markups download and all comment channels
             if (tabPre) tabPre.style.display = 'flex';
             if (tabRec) tabRec.style.display = 'flex';
+            if (exportBtn) exportBtn.style.display = 'flex';
+            if (sideTitle) sideTitle.textContent = 'Inline Markups';
+            if (countBadge) countBadge.style.display = 'inline-block';
+            if (tabEd) tabEd.style.display = '';
+            if (tabR2E) tabR2E.style.display = '';
+            if (tabRev) tabRev.style.display = '';
+            if (tabAuth) {
+                tabAuth.style.display = '';
+                tabAuth.style.flex = '1.2';
+            }
+            if (docHint) {
+                docHint.innerHTML = '<span style="color:#eab308">💡</span> Select any sentence to leave a review markup &bull; Click sidebar comments to auto-scroll and highlight';
+            }
         } else if (isReviewer) {
             // Reviewers: only Document & Markups and AI Pre-Screening
+            var pushStep3Btn = document.getElementById('sfSyncToOjsStep3SidebarBtn');
+            if (pushStep3Btn) pushStep3Btn.style.display = 'inline-flex';
             if (tabPre) tabPre.style.display = 'flex';
             if (tabRec) tabRec.style.display = 'none';
-
+            if (exportBtn) exportBtn.style.display = 'flex';
+            if (sideTitle) sideTitle.textContent = 'Inline Markups';
+            if (countBadge) countBadge.style.display = 'inline-block';
+            if (tabEd) tabEd.style.display = '';
+            if (tabR2E) tabR2E.style.display = '';
+            if (tabRev) tabRev.style.display = '';
+            if (tabAuth) {
+                tabAuth.style.display = 'none';
+            }
+            if (docHint) {
+                docHint.innerHTML = '<span style="color:#eab308">💡</span> Select any sentence to leave a review markup &bull; Click sidebar comments to auto-scroll and highlight';
+            }
             var activeTab = document.querySelector('.sf-tab-btn.active');
             if (activeTab && activeTab.id === 'sfTabRecReviewers') {
                 switchTab('viewer');
             }
         } else {
-            // Authors and non-editorial: only Document & Markups
+            // Other roles: viewer only
             if (tabPre) tabPre.style.display = 'none';
             if (tabRec) tabRec.style.display = 'none';
-
+            if (exportBtn) exportBtn.style.display = 'none';
             var activeTab = document.querySelector('.sf-tab-btn.active');
             if (activeTab && activeTab.id !== 'sfTabViewer') {
                 switchTab('viewer');
@@ -1135,6 +1444,7 @@ function injectNativeReviewerMatchmaking(force) {
 
         // Inject native workflow and dashboard buttons & badges
         injectNativeOJSButtons();
+        injectReviewerStep3Sync();
         injectNativeDashboardBadges();
     }
 
@@ -1184,13 +1494,13 @@ function injectNativeReviewerMatchmaking(force) {
             'display:flex', 'align-items:center', 'justify-content:center',
             'background:rgba(255,255,255,0.92)', 'border:1px solid rgba(99,102,241,0.3)',
             'border-radius:12px', 'padding:3px 14px',
-            'cursor:grab', 'color:#6366f1',
+            'cursor:grab', 'color:#0f172a',
             'box-shadow:0 2px 6px rgba(0,0,0,0.06)',
             'backdrop-filter:blur(6px)',
             'transition:background 0.15s ease, border-color 0.15s ease',
             'pointer-events:auto'
         ].join(';');
-        handle.innerHTML = '<svg viewBox="0 0 16 8" style="width:16px;height:8px;fill:#6366f1;display:block;pointer-events:none">' +
+        handle.innerHTML = '<svg viewBox="0 0 16 8" style="width:16px;height:8px;fill:#0f172a;display:block;pointer-events:none">' +
             '<circle cx="2" cy="2" r="1.3"/><circle cx="8" cy="2" r="1.3"/><circle cx="14" cy="2" r="1.3"/>' +
             '<circle cx="2" cy="6" r="1.3"/><circle cx="8" cy="6" r="1.3"/><circle cx="14" cy="6" r="1.3"/>' +
             '</svg>';
@@ -1201,7 +1511,7 @@ function injectNativeReviewerMatchmaking(force) {
         btn.style.cssText = [
             'display:flex', 'align-items:center', 'gap:10px',
             'padding:13px 24px',
-            'background:linear-gradient(135deg,#4f46e5,#3b82f6)',
+            'background:#0f172a',
             'color:#ffffff', 'border:none', 'border-radius:50px',
             'cursor:grab', 'pointer-events:auto',
             'font-family:Inter,Segoe UI,-apple-system,sans-serif',
@@ -1334,7 +1644,7 @@ function injectNativeReviewerMatchmaking(force) {
         ['dismissableLayer.pointerDownOutside', 'dismissableLayer.focusOutside'].forEach(function (evtName) {
             document.addEventListener(evtName, function (e) {
                 var origTarget = e && e.detail && e.detail.originalEvent && e.detail.originalEvent.target;
-                var recentlyClosed = (Date.now() - (window.__sfClosingTimestamp || 0)) < 350;
+                var recentlyClosed = (Date.now() - (window.__sfClosingTimestamp || 0)) < 800;
                 if (window.__sfModalOpen || recentlyClosed || isInsideScholarFlowUi(origTarget)) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1388,7 +1698,29 @@ function injectNativeReviewerMatchmaking(force) {
                 updateSubmissionSelect();
             }
 
+            if (!window.__sfHistoryGuardInstalled) {
+                window.__sfHistoryGuardInstalled = true;
+                window.addEventListener('popstate', function (e) {
+                    if (window.__sfModalOpen) {
+                        e.stopImmediatePropagation();
+                        sfClose(true);
+                    } else if (window.__sfIgnoreNextPopstate) {
+                        window.__sfIgnoreNextPopstate = false;
+                        e.stopImmediatePropagation();
+                    }
+                }, true);
+            }
+
             if (overlay) {
+                if (!window.__sfModalOpen) {
+                    try {
+                        if (window.location.hash !== '#scholarflow') {
+                            var baseHref = window.location.href.split('#')[0];
+                            window.history.pushState({ sfModal: true }, '', baseHref + '#scholarflow');
+                            window.__sfPushedHistoryState = true;
+                        }
+                    } catch (_) {}
+                }
                 overlay.style.display = 'flex';
                 window.__sfModalOpen = true;
                 window.__sfClosingTimestamp = 0;
@@ -1397,6 +1729,7 @@ function injectNativeReviewerMatchmaking(force) {
                 ensureSelectionPopover();
                 bindDocumentSelectionListeners();
                 initSplitterResize();
+                startLiveAnnotationSync();
 
                 var subSelect = document.getElementById('sfSubmissionSelect');
                 if (subSelect && String(subSelect.value) !== String(targetSid)) {
@@ -1423,7 +1756,7 @@ function injectNativeReviewerMatchmaking(force) {
                                 renderLoginRequiredState();
                             } else {
                                 applyUserRoleGating();
-                                __sfSwitchTab(tab);
+                                switchTab(tab);
                                 loadDocumentViewer(targetSid);
                             }
                         })
@@ -1432,7 +1765,7 @@ function injectNativeReviewerMatchmaking(force) {
                         });
                 } else {
                     applyUserRoleGating();
-                    __sfSwitchTab(tab);
+                    switchTab(tab);
                     loadDocumentViewer(targetSid);
                 }
             }
@@ -1484,10 +1817,10 @@ function injectNativeReviewerMatchmaking(force) {
             '  <div style="width:64px;height:64px;margin:0 auto 18px;border-radius:16px;background:linear-gradient(135deg,#eef2ff,#e0e7ff);display:flex;align-items:center;justify-content:center;font-size:32px;border:1px solid #c7d2fe">🔐</div>',
             '  <h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 10px">You Need to Log In First</h2>',
             '  <p style="font-size:14px;color:#475569;line-height:1.6;margin:0 0 24px">',
-            '    Please log in with your OJS account (Editor, Reviewer, or Author) to use <strong>ScholarFlow</strong>, read manuscripts, leave inline markups, and run AI pre-screening.',
+            '    Please log in with your OJS account (Editor, Reviewer, or Author) to use <strong>ScholarFlow</strong>, read manuscripts, leave inline markups, and run pre-screening.',
             '  </p>',
             '  <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">',
-            '    <a href="' + loginUrl + '" style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#4f46e5,#3b82f6);color:#ffffff;text-decoration:none;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(79,70,229,0.3)">',
+            '    <a href="' + loginUrl + '" style="display:inline-flex;align-items:center;gap:8px;background:#0f172a;color:#ffffff;text-decoration:none;padding:11px 24px;border-radius:8px;font-size:14px;font-weight:700;box-shadow:0 4px 12px rgba(79,70,229,0.3)">',
             '      <span>🔑</span> <span>Log In to Continue</span>',
             '    </a>',
             '    <button type="button" onclick="window.__sfClose()" style="display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;padding:11px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">',
@@ -1522,7 +1855,7 @@ function injectNativeReviewerMatchmaking(force) {
             '    The database has been reset and is completely clean. To test the peer review and AI workflow, submit a new manuscript using the Author Submission Wizard.',
             '  </p>',
             '  <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">',
-            '    <a href="' + getContextBase() + '/submission/wizard" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#4f46e5,#3b82f6);color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(79,70,229,0.3)">',
+            '    <a href="' + getContextBase() + '/submission/wizard" style="display:inline-flex;align-items:center;gap:6px;background:#0f172a;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(79,70,229,0.3)">',
             '      <span>➕</span> <span>Submit New Manuscript (Author Wizard)</span>',
             '    </a>',
             '  </div>',
@@ -1536,9 +1869,21 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
     // ── Close modal ────────────────────────────────────────────────────────
-    function sfClose() {
+    function sfClose(fromPopstate) {
+        stopLiveAnnotationSync();
         window.__sfClosingTimestamp = Date.now();
         window.__sfModalOpen = false;
+        if (!fromPopstate && window.__sfPushedHistoryState) {
+            window.__sfPushedHistoryState = false;
+            try {
+                if (window.location.hash === '#scholarflow') {
+                    window.__sfIgnoreNextPopstate = true;
+                    window.history.back();
+                }
+            } catch (_) {}
+        } else {
+            window.__sfPushedHistoryState = false;
+        }
         var overlay = document.getElementById('sfOverlay');
         if (overlay) {
             overlay.style.display = 'none';
@@ -1582,20 +1927,12 @@ function injectNativeReviewerMatchmaking(force) {
         }
     }, true);
 
-    // ── Toggle Fullscreen / Windowed Mode ──────────────────────────────────
+    // ── Enforce Fullscreen Only (Windowed mode removed) ────────────────────────
     function toggleWindowMode() {
         var container = document.getElementById('sfModalContainer');
-        var btn = document.getElementById('sfToggleSizeBtn');
         if (!container) return;
-
-        isFullscreen = !isFullscreen;
-        if (isFullscreen) {
-            container.className = 'sf-modal-fullscreen';
-            if (btn) btn.innerHTML = '🗗 Windowed';
-        } else {
-            container.className = 'sf-modal-windowed';
-            if (btn) btn.innerHTML = '🗖 Fullscreen';
-        }
+        isFullscreen = true;
+        container.className = 'sf-modal-fullscreen';
     }
 
 
@@ -1686,7 +2023,7 @@ function injectNativeReviewerMatchmaking(force) {
             var statusCol = s.status === 'Published' ? '#15803d' : (s.status === 'Declined' ? '#b91c1c' : '#1d4ed8');
             var journalLabel = s.journalName || s.journalAcronym || '';
 
-            html += '<div style="background:#ffffff;border:' + (isCurrent ? '2px solid #6366f1' : '1px solid #e2e8f0') + ';border-radius:12px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 6px rgba(0,0,0,0.03);transition:all 0.15s' + (isCurrent ? ';background:#f5f3ff' : '') + '">';
+            html += '<div style="background:#ffffff;border:' + (isCurrent ? '2px solid #0f172a' : '1px solid #e2e8f0') + ';border-radius:12px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 2px 6px rgba(0,0,0,0.03);transition:all 0.15s' + (isCurrent ? ';background:#f5f3ff' : '') + '">';
             html += '  <div style="flex:1;min-width:0">';
             html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">';
             if (journalLabel) {
@@ -1695,7 +2032,7 @@ function injectNativeReviewerMatchmaking(force) {
             html += '      <span style="font-size:11px;font-weight:800;background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:6px">ID #' + s.id + '</span>';
             html += '      <span style="font-size:11px;font-weight:700;background:' + statusBg + ';color:' + statusCol + ';padding:2px 8px;border-radius:6px">' + s.status + '</span>';
             if (isCurrent) {
-                html += '    <span style="font-size:11px;font-weight:800;background:#4f46e5;color:#fff;padding:2px 8px;border-radius:6px">Active Now</span>';
+                html += '    <span style="font-size:11px;font-weight:800;background:#0f172a;color:#fff;padding:2px 8px;border-radius:6px">Active Now</span>';
             }
             html += '    </div>';
             html += '    <div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(s.title) + '</div>';
@@ -1706,7 +2043,7 @@ function injectNativeReviewerMatchmaking(force) {
             }
             html += '    </div>';
             html += '  </div>';
-            html += '  <button onclick="__sfSelectPaper(' + s.id + '); __sfClosePaperPickerModal();" style="background:' + (isCurrent ? '#4f46e5' : '#0f172a') + ';color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);transition:background 0.2s">';
+            html += '  <button onclick="__sfSelectPaper(' + s.id + '); __sfClosePaperPickerModal();" style="background:' + (isCurrent ? '#0f172a' : '#0f172a') + ';color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,0,0,0.1);transition:background 0.2s">';
             html += (isCurrent ? '✓ Currently Viewing' : 'Open Paper ➔');
             html += '  </button>';
             html += '</div>';
@@ -1731,7 +2068,7 @@ function injectNativeReviewerMatchmaking(force) {
         if (reviewerBadge) {
             reviewerBadge.textContent = 'AI MATCHING';
             reviewerBadge.style.background = '#eef2ff';
-            reviewerBadge.style.color = '#4338ca';
+            reviewerBadge.style.color = '#0f172a';
             reviewerBadge.style.borderColor = '#c7d2fe';
         }
         var reviewerCacheTag = document.getElementById('sfReviewerCacheTag');
@@ -1840,7 +2177,7 @@ function injectNativeReviewerMatchmaking(force) {
             if (btn) {
                 btn.style.background = '#eef2ff';
                 btn.style.borderColor = '#c7d2fe';
-                btn.style.color = '#4f46e5';
+                btn.style.color = '#0f172a';
             }
         } else {
             commentsCol.style.display = 'flex';
@@ -2064,7 +2401,7 @@ function injectNativeReviewerMatchmaking(force) {
                   '<div id="sfReRunScopeSection" style="margin-bottom:18px"></div>',
                   '<div style="display:flex;justify-content:flex-end;gap:10px">',
                     '<button onclick="__sfCloseReRunModal()" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer">Cancel</button>',
-                    '<button onclick="__sfConfirmReRunAnalysis()" style="background:#4f46e5;border:none;color:#ffffff;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">Proceed with Re-Run</button>',
+                    '<button onclick="__sfConfirmReRunAnalysis()" style="background:#0f172a;border:none;color:#ffffff;border-radius:8px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">Proceed with Re-Run</button>',
                   '</div>',
                 '</div>',
               '</div>',
@@ -2093,13 +2430,14 @@ function injectNativeReviewerMatchmaking(force) {
                 '<div style="flex:1;overflow-y:auto;padding:18px 24px;display:flex;flex-direction:column;gap:12px;background:#ffffff">',
                   '<div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">Generated Decision &amp; Feedback Letter for Author:</div>',
                   '<textarea id="sfSendAuthorLetterText" style="width:100%;height:220px;border:1px solid #cbd5e1;border-radius:8px;padding:12px;font-family:monospace,Consolas,sans-serif;font-size:12px;line-height:1.6;color:#1e293b;background:#f8fafc;box-sizing:border-box;resize:vertical"></textarea>',
-                  '<div id="sfSendAuthorFeedbackStatus" style="font-size:12px;color:#059669;font-weight:600;display:none">✅ Copied to clipboard! Ready to paste into OJS editorial email.</div>',
+                  '<div id="sfSendAuthorFeedbackStatus" style="font-size:12px;color:#059669;font-weight:600;display:none"></div>',
                 '</div>',
-                '<div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center">',
+                '<div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">',
                   '<button onclick="__sfDownloadAuthorLetter()" style="background:#ffffff;border:1px solid #cbd5e1;color:#334155;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">📥 Download Letter (.txt)</button>',
-                  '<div style="display:flex;gap:8px">',
+                  '<div style="display:flex;gap:8px;flex-wrap:wrap">',
                     '<button onclick="__sfCloseSendToAuthorModal()" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer">Close</button>',
-                    '<button onclick="__sfCopyAuthorLetter()" style="background:#4f46e5;border:none;color:#ffffff;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,0.3)">📋 Copy Letter to Clipboard</button>',
+                    '<button onclick="__sfCopyAuthorLetter()" style="background:#ffffff;border:1px solid #cbd5e1;color:#334155;border-radius:6px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">📋 Copy</button>',
+                    '<button id="sfDispatchAuthorLetterBtn" onclick="__sfDispatchAuthorLetter()" style="background:linear-gradient(135deg,#059669,#047857);border:none;color:#ffffff;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(5,150,105,0.3)">🚀 Send to Author Now</button>',
                   '</div>',
                 '</div>',
               '</div>',
@@ -2136,16 +2474,18 @@ function injectNativeReviewerMatchmaking(force) {
             /* ── Header Bar: Deep Modern Indigo Gradient ── */
             '<div style="display:flex;align-items:center;justify-content:space-between;',
             'padding:12px 24px;border-bottom:1px solid rgba(255,255,255,.12);',
-            'background:linear-gradient(135deg,#1e1b4b,#312e81,#4338ca);color:#fff;flex-shrink:0">',
-              '<div style="display:flex;align-items:center;gap:14px">',
+            'background:#0f172a;color:#fff;border-bottom:1px solid rgba(255,255,255,0.1);flex-shrink:0">',
+              '<div style="display:flex;align-items:center;gap:12px">',
+                '<button id="sfBackToDashboardBtn" type="button" onclick="event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); __sfClose();" title="Return to Submissions Dashboard" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);border-radius:8px;padding:6px 14px;color:#ffffff;font-size:12px;font-weight:700;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 2px 6px rgba(0,0,0,0.15);transition:all 0.15s" onmouseenter="this.style.background=\'rgba(255,255,255,.26)\';this.style.transform=\'translateX(-2px)\'" onmouseleave="this.style.background=\'rgba(255,255,255,.16)\';this.style.transform=\'translateX(0)\'"><span style="font-size:14px">←</span> <span>Back to Submissions</span></button>',
+                '<div style="width:1px;height:24px;background:rgba(255,255,255,.2)"></div>',
                 '<div style="width:38px;height:38px;border-radius:10px;',
-                'background:linear-gradient(135deg,#6366f1,#3b82f6);',
+                'background:#1e293b;border:1px solid #334155;',
                 'display:flex;align-items:center;justify-content:center;',
                 'font-size:16px;font-weight:800;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.25)">SF</div>',
                 '<div>',
                   '<div style="font-size:16px;font-weight:700;color:#fff;display:flex;align-items:center;gap:10px">',
                     '<span>ScholarFlow Platform</span>',
-                    '<span id="sfUserRoleBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe">User</span>',
+                    '<span id="sfUserRoleBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:rgba(255,255,255,0.1);color:#e2e8f0;border:1px solid rgba(255,255,255,0.2)">User</span>',
                   '</div>',
                   '<div id="sfDocTitleHeader" style="font-size:12px;color:#cbd5e1;max-width:700px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">In-Platform Manuscript Reader & Inline Peer Review</div>',
                 '</div>',
@@ -2156,9 +2496,8 @@ function injectNativeReviewerMatchmaking(force) {
                   '<select id="sfSubmissionSelect" onchange="__sfSelectPaper(this.value)" style="background:#ffffff;border:1px solid #cbd5e1;color:#0f172a;border-radius:6px;padding:4px 8px;font-size:12px;font-weight:600;max-width:280px;cursor:pointer;outline:none;text-overflow:ellipsis">',
                     '<option value="' + (sid || '1') + '">Loading papers...</option>',
                   '</select>',
-                  '<button onclick="__sfOpenPaperPickerModal()" title="Browse all papers in journal" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(0,0,0,0.2);transition:background 0.2s">📚 Browse</button>',
+                  '<button onclick="__sfOpenPaperPickerModal()" title="Browse all papers in journal" style="background:#1e293b;color:#fff;border:1px solid #334155;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;transition:background 0.15s">📚 Browse</button>',
                 '</div>',
-                '<button id="sfToggleSizeBtn" onclick="__sfToggleMode()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:6px 12px;cursor:pointer;color:#ffffff;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">🗗 Windowed</button>',
                 '<button type="button" onclick="event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); __sfClose();" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);',
                 'border-radius:8px;width:34px;height:34px;cursor:pointer;color:#ffffff;',
                 'font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;transition:background 0.2s">',
@@ -2169,12 +2508,12 @@ function injectNativeReviewerMatchmaking(force) {
             /* ── Tabs Navigation Bar (Modern Light Clean Aesthetic) ── */
             '<div id="sfTabsNavBar" style="display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid #e2e8f0;background:#ffffff;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.03)">',
               '<div class="sf-tabs-container" style="display:flex;gap:4px;padding:4px 0 0 0;">',
-                '<button id="sfTabViewer" class="sf-tab-btn active" onclick="event.stopPropagation(); __sfSwitchTab(\'viewer\');" style="background:none;border:none;border-bottom:3px solid #4f46e5;color:#4f46e5;font-weight:700;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">📖 Document &amp; Markups</button>',
-                '<button id="sfTabPreScreen" class="sf-tab-btn" onclick="event.stopPropagation(); __sfSwitchTab(\'prescreen\');" style="background:none;border:none;border-bottom:3px solid transparent;color:#64748b;font-weight:600;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">🤖 AI Pre-Screening</button>',
-                '<button id="sfTabRecReviewers" class="sf-tab-btn" onclick="event.stopPropagation(); __sfSwitchTab(\'reviewers\');" style="background:none;border:none;border-bottom:3px solid transparent;color:#64748b;font-weight:600;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:none;align-items:center;gap:6px">👥 Reviewer Matchmaking</button>',
+                '<button id="sfTabViewer" class="sf-tab-btn active" onclick="event.stopPropagation(); __sfSwitchTab(\'viewer\');" style="background:none;border:none;border-bottom:2px solid #0f172a;color:#0f172a;font-weight:700;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">📖 Document &amp; Markups</button>',
+                '<button id="sfTabPreScreen" class="sf-tab-btn" onclick="event.stopPropagation(); __sfSwitchTab(\'prescreen\');" style="background:none;border:none;border-bottom:3px solid transparent;color:#64748b;font-weight:600;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:flex;align-items:center;gap:6px">📋 Manuscript Pre-Screening</button>',
+                '<button id="sfTabRecReviewers" class="sf-tab-btn" onclick="event.stopPropagation(); __sfSwitchTab(\'reviewers\');" style="background:none;border:none;border-bottom:3px solid transparent;color:#64748b;font-weight:600;padding:12px 18px;cursor:pointer;font-size:14px;font-family:inherit;transition:all 0.2s;display:none;align-items:center;gap:6px">👥 Reviewer Assignment</button>',
               '</div>',
               '<div>',
-                '<button onclick="__sfExportMarkups()" style="display:flex;align-items:center;gap:6px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:all 0.2s">📥 Download Markup Report</button>',
+                '<button id="sfExportMarkupsBtn" onclick="__sfExportMarkups()" style="display:flex;align-items:center;gap:6px;background:#0f172a;border:1px solid #0f172a;color:#ffffff;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:all 0.2s">📥 Download Markup Report</button>',
               '</div>',
             '</div>',
 
@@ -2186,11 +2525,11 @@ function injectNativeReviewerMatchmaking(force) {
                 /* Left Canvas: Academic Paper Document Reader */
                 '<div id="sfDocCol" style="flex:0 0 68%;width:68%;display:flex;flex-direction:column;padding:20px 24px;overflow:hidden;border-right:1px solid #e2e8f0;box-sizing:border-box;min-width:320px">',
                   '<div id="sfDocToolbarBar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;background:#ffffff;padding:8px 16px;border-radius:8px;border:1px solid #e2e8f0;flex-shrink:0">',
-                    '<div style="font-size:12px;color:#475569;font-weight:600;display:flex;align-items:center;gap:6px">',
+                    '<div id="sfDocToolbarHintText" style="font-size:12px;color:#475569;font-weight:600;display:flex;align-items:center;gap:6px">',
                       '<span style="color:#eab308">💡</span> Select any sentence to leave a review markup &bull; Click sidebar comments to auto-scroll and highlight',
                     '</div>',
                     '<div style="display:flex;align-items:center;gap:8px">',
-                      '<div id="sfDocInfoTag" style="font-size:11px;font-weight:700;color:#4f46e5;background:#eef2ff;padding:3px 10px;border-radius:6px;border:1px solid #c7d2fe">DOCX / HTML View</div>',
+                      '<div id="sfDocInfoTag" style="font-size:11px;font-weight:700;color:#334155;background:#f1f5f9;padding:3px 10px;border-radius:6px;border:1px solid #e2e8f0">DOCX / HTML View</div>',
                       '<button id="sfToggleSidebarBtn" onclick="__sfToggleCommentsSidebar()" title="Show or hide the comments sidebar" style="display:flex;align-items:center;gap:6px;background:#f8fafc;border:1px solid #cbd5e1;color:#334155;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s">',
                         '<svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>',
                         '<span id="sfToggleSidebarBtnText">Hide Sidebar</span>',
@@ -2209,20 +2548,22 @@ function injectNativeReviewerMatchmaking(force) {
                 '<div id="sfCommentsCol" style="flex:0 0 32%;width:32%;display:flex;flex-direction:column;background:#ffffff;overflow:hidden;padding:16px 18px;border-left:1px solid #e2e8f0;box-sizing:border-box;min-width:260px">',
                   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid #f1f5f9;flex-shrink:0">',
                     '<div style="font-size:15px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:8px">',
-                      '<span>Inline Markups</span>',
-                      '<span id="sfCommentsCountBadge" style="font-size:11px;font-weight:800;background:#4f46e5;color:#ffffff;padding:2px 8px;border-radius:12px">0</span>',
+                      '<span id="sfSidebarTitleText">Inline Markups</span>',
+                      '<span id="sfCommentsCountBadge" style="font-size:11px;font-weight:800;background:#0f172a;color:#ffffff;padding:2px 8px;border-radius:12px">0</span>',
                     '</div>',
                     '<div style="display:flex;align-items:center;gap:6px">',
-                      '<button id="sfSendToAuthorBtn" onclick="__sfOpenSendToAuthorModal()" title="Send reviewer comments separately to author" style="display:none;align-items:center;gap:4px;background:#eef2ff;border:1px solid #c7d2fe;color:#4338ca;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s">✉️ Send to Author</button>',
+                      '<button id="sfSendToAuthorBtn" onclick="__sfOpenSendToAuthorModal()" title="Send reviewer comments separately to author" style="display:none;align-items:center;gap:4px;background:#eef2ff;border:1px solid #c7d2fe;color:#0f172a;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s">✉️ Send to Author</button>',
+                      '<button id="sfSyncToOjsStep3SidebarBtn" onclick="__sfSyncReviewToStep3(); __sfClose();" title="Sync all your inline review comments directly into the official Step 3 review form" style="display:none;align-items:center;gap:4px;background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s">📥 Push to Review Form</button>',
                       '<button onclick="__sfToggleCommentsSidebar()" title="Hide comments sidebar" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#64748b;font-size:13px;font-weight:700;transition:all 0.15s" onmouseenter="this.style.background=\'#e2e8f0\';this.style.color=\'#0f172a\'" onmouseleave="this.style.background=\'#f1f5f9\';this.style.color=\'#64748b\'">✕</button>',
                     '</div>',
                   '</div>',
 
                   /* Segmented Filter Control: Editor Comments / Reviewer to Editor (Read Only) / Reviewer Comments */
                   '<div id="sfCommentTabsWrap" style="display:flex;align-items:center;gap:3px;background:#f1f5f9;padding:3px;border-radius:8px;margin-bottom:8px;flex-shrink:0">',
-                    '<button id="sfCommentTab-editor" onclick="__sfFilterCommentsTab(\'editor\')" class="sf-comment-filter-btn" style="flex:1;background:#ffffff;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:700;color:#4f46e5;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.06);transition:all 0.15s" title="Comments made by the Editor">🟣 Editor (<span id="sfCountEditor">0</span>)</button>',
+                    '<button id="sfCommentTab-editor" onclick="__sfFilterCommentsTab(\'editor\')" class="sf-comment-filter-btn" style="flex:1;background:#ffffff;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:700;color:#0f172a;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.06);transition:all 0.15s" title="Comments made by the Editor">🟣 Editor (<span id="sfCountEditor">0</span>)</button>',
                     '<button id="sfCommentTab-reviewer_to_editor" onclick="__sfFilterCommentsTab(\'reviewer_to_editor\')" class="sf-comment-filter-btn" style="flex:1.2;background:none;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:600;color:#64748b;cursor:pointer;transition:all 0.15s" title="Confidential comments made by reviewers to the editor in read-only mode"><span id="sfRevToEdLabel">🔒 To Editor</span> (<span id="sfCountReviewerToEditor">0</span>)</button>',
                     '<button id="sfCommentTab-reviewer" onclick="__sfFilterCommentsTab(\'reviewer\')" class="sf-comment-filter-btn" style="flex:1;background:none;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:600;color:#64748b;cursor:pointer;transition:all 0.15s" title="Standard comments made by Reviewers">🔵 Reviewers (<span id="sfCountReviewer">0</span>)</button>',
+                    '<button id="sfCommentTab-author_letters" onclick="__sfFilterCommentsTab(\'author_letters\')" class="sf-comment-filter-btn" style="flex:1.2;background:none;border:none;border-radius:6px;padding:5px 3px;font-size:11px;font-weight:600;color:#64748b;cursor:pointer;transition:all 0.15s" title="Dispatched feedback letters for the Author">📨 Letters (<span id="sfCountAuthorLetters">0</span>)</button>',
                   '</div>',
 
                   /* Sub-filter dropdown for individual reviewers */
@@ -2247,7 +2588,7 @@ function injectNativeReviewerMatchmaking(force) {
                       '<span id="sfModalBadge" class="sf-prescreen-badge" style="display:inline-block;padding:6px 14px;border-radius:8px;font-size:13px;font-weight:800;background:#f1f5f9;color:#475569;margin-top:4px;border:1px solid #cbd5e1">INITIALIZING...</span>',
                       '<span id="sfModalCacheTag" class="sf-prescreen-cache" style="display:none;font-size:11px;margin-left:8px;color:#059669;font-weight:600;background:#dcfce7;padding:3px 8px;border-radius:6px">⚡ Cached (Instant)</span>',
                     '</div>',
-                    '<button type="button" onclick="window.__sfDirectReRunAnalysis()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,.3);transition:background .2s">🔄 Re-Run Full Analysis</button>',
+                    '<button type="button" onclick="window.__sfDirectReRunAnalysis()" style="background:#0f172a;color:#fff;border:1px solid #0f172a;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">🔄 Re-Run Full Analysis</button>',
                   '</div>',
                   '<div id="sfModalReport" class="sf-prescreen-report" style="color:#334155;font-size:15px;line-height:1.85">',
                     '<div style="text-align:center;padding:40px 20px;color:#64748b;font-size:14px">Loading editorial evaluation...</div>',
@@ -2261,10 +2602,10 @@ function injectNativeReviewerMatchmaking(force) {
                   '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #e2e8f0;flex-wrap:wrap;gap:12px">',
                     '<div style="display:flex;align-items:center;gap:12px">',
                       '<h2 style="margin:0;font-size:20px;font-weight:800;color:#0f172a">AI-Ranked Reviewer Matchmaking</h2>',
-                      '<span id="sfReviewerBadge" style="display:inline-block;font-size:11px;font-weight:800;letter-spacing:0.5px;padding:4px 10px;border-radius:20px;border:1px solid #c7d2fe;background:#eef2ff;color:#4338ca">AI MATCHING</span>',
+                      '<span id="sfReviewerBadge" style="display:inline-block;font-size:11px;font-weight:800;letter-spacing:0.5px;padding:4px 10px;border-radius:20px;border:1px solid #e2e8f0;background:#f8fafc;color:#0f172a">AI MATCHING</span>',
                       '<span id="sfReviewerCacheTag" style="display:none;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px"></span>',
                     '</div>',
-                    '<button onclick="window.__sfReRunReviewers()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(79,70,229,.3);transition:background .2s">🔄 Re-Match Reviewers</button>',
+                    '<button onclick="window.__sfReRunReviewers()" style="background:#0f172a;color:#fff;border:1px solid #0f172a;border-radius:6px;padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">🔄 Re-Match Reviewers</button>',
                   '</div>',
                   '<div id="sfReviewers" style="color:#334155;font-size:14px;line-height:1.8"></div>',
                 '</div>',
@@ -2288,16 +2629,16 @@ function injectNativeReviewerMatchmaking(force) {
             '@keyframes sfGlowPulseLight{0%{background-color:#facc15!important;color:#000000!important;box-shadow:0 0 0 4px rgba(250,204,21,0.85),0 0 24px rgba(250,204,21,0.9)!important;outline:2px solid #ca8a04!important}50%{background-color:#fde047!important;color:#000000!important;box-shadow:0 0 0 6px rgba(253,224,71,0.9),0 0 32px rgba(253,224,71,1)!important;outline:2px solid #eab308!important}100%{background-color:#facc15!important;color:#000000!important;box-shadow:0 0 0 4px rgba(250,204,21,0.85),0 0 24px rgba(250,204,21,0.9)!important;outline:2px solid #ca8a04!important}}',
             '.sf-active-comment-mark{animation:sfGlowPulseLight 1.2s ease-in-out infinite alternate!important;background-color:#facc15!important;color:#000000!important;border-radius:4px!important;font-weight:700!important;z-index:100!important;position:relative!important;display:inline!important;box-shadow:0 0 0 4px rgba(250,204,21,0.85),0 0 24px rgba(250,204,21,0.9)!important}',
             '.sf-paragraph-active{display:block!important;border-left:5px solid #eab308!important;background:rgba(254,240,138,0.3)!important;padding-left:16px!important;border-radius:6px!important;transition:all 0.3s ease!important}',
-            '.sf-focus-callout{position:absolute!important;z-index:2147483640!important;background:linear-gradient(135deg,#1e1b4b,#312e81)!important;color:#ffffff!important;border:1px solid #818cf8!important;border-radius:8px!important;padding:7px 14px!important;font-size:12px!important;font-weight:600!important;box-shadow:0 10px 28px rgba(15,23,42,0.4),0 0 16px rgba(129,140,248,0.5)!important;pointer-events:none!important;display:flex!important;align-items:center!important;gap:8px!important;animation:sfPopIn 0.25s cubic-bezier(0.175,0.885,0.32,1.275)!important;transform-origin:bottom left!important}',
-            '.sf-focus-callout::after{content:\'\'!important;position:absolute!important;bottom:-6px!important;left:16px!important;border-width:6px 6px 0 6px!important;border-style:solid!important;border-color:#818cf8 transparent transparent transparent!important}',
+            '.sf-focus-callout{position:absolute!important;z-index:2147483640!important;background:linear-gradient(135deg,#1e1b4b,#312e81)!important;color:#ffffff!important;border:1px solid #cbd5e1!important;border-radius:8px!important;padding:7px 14px!important;font-size:12px!important;font-weight:600!important;box-shadow:0 10px 28px rgba(15,23,42,0.4),0 0 16px rgba(129,140,248,0.5)!important;pointer-events:none!important;display:flex!important;align-items:center!important;gap:8px!important;animation:sfPopIn 0.25s cubic-bezier(0.175,0.885,0.32,1.275)!important;transform-origin:bottom left!important}',
+            '.sf-focus-callout::after{content:\'\'!important;position:absolute!important;bottom:-6px!important;left:16px!important;border-width:6px 6px 0 6px!important;border-style:solid!important;border-color:#cbd5e1 transparent transparent transparent!important}',
             '@keyframes sfPopIn{0%{opacity:0;transform:translateY(6px) scale(0.9)}100%{opacity:1;transform:translateY(0) scale(1)}}',
             '.sf-comment-card{background:#ffffff!important;border:1px solid #e2e8f0!important;border-radius:10px!important;padding:14px 16px!important;margin-bottom:12px!important;display:flex!important;flex-direction:column!important;gap:8px!important;cursor:pointer!important;box-shadow:0 2px 6px rgba(0,0,0,0.03)!important;transition:transform 0.15s ease,border-color 0.15s ease,background 0.15s ease,box-shadow 0.15s ease!important}',
             '.sf-comment-card:hover{background:#f8fafc!important;border-color:#cbd5e1!important;transform:translateX(2px)!important;box-shadow:0 4px 12px rgba(0,0,0,0.06)!important}',
-            '.sf-comment-card.sf-selected-card{border-color:#6366f1!important;background:#eef2ff!important;box-shadow:0 0 0 2px #6366f1,0 6px 20px rgba(99,102,241,0.15)!important;transform:translateX(4px)!important}',
+            '.sf-comment-card.sf-selected-card{border-color:#0f172a!important;background:#eef2ff!important;box-shadow:0 0 0 2px #0f172a,0 6px 20px rgba(99,102,241,0.15)!important;transform:translateX(4px)!important}',
             '.sf-splitter{width:10px!important;margin:0 -5px!important;cursor:col-resize!important;z-index:25!important;display:flex!important;align-items:center!important;justify-content:center!important;user-select:none!important;-webkit-user-select:none!important;flex-shrink:0!important;position:relative!important;transition:background 0.15s ease!important}',
             '.sf-splitter:hover,.sf-splitter.sf-resizing-active{background:rgba(99,102,241,0.12)!important}',
             '.sf-splitter-bar{width:3px!important;height:48px!important;border-radius:4px!important;background:#cbd5e1!important;transition:all 0.2s ease!important}',
-            '.sf-splitter:hover .sf-splitter-bar,.sf-splitter.sf-resizing-active .sf-splitter-bar{width:4px!important;height:64px!important;background:#4f46e5!important;box-shadow:0 0 10px rgba(79,70,229,0.6)!important}',
+            '.sf-splitter:hover .sf-splitter-bar,.sf-splitter.sf-resizing-active .sf-splitter-bar{width:4px!important;height:64px!important;background:#0f172a!important;box-shadow:0 0 10px rgba(79,70,229,0.6)!important}',
             'body.sf-resizing,body.sf-resizing *{cursor:col-resize!important;user-select:none!important;-webkit-user-select:none!important}',
             '</style>'
         ].join('');
@@ -2325,7 +2666,7 @@ function injectNativeReviewerMatchmaking(force) {
         var pop = document.createElement('div');
         pop.id = 'sfSelectionPopover';
         pop.style.cssText = [
-            'display:none !important',
+            'display:none',
             'position:fixed !important',
             'z-index:2147483648 !important',
             'background:#ffffff !important',
@@ -2349,7 +2690,7 @@ function injectNativeReviewerMatchmaking(force) {
             '    <span id="sfColorDot-pink" onclick="window.__sfSetColor(\'pink\')" style="width:16px;height:16px;border-radius:50%;background:#ec4899;cursor:pointer;display:inline-block;border:2px solid transparent;transition:all 0.15s" title="Pink"></span>',
             '  </div>',
             '</div>',
-            '<div id="sfSelectionPreview" style="background:#f1f5f9;border-left:3px solid #4f46e5;border-radius:4px;padding:5px 8px;margin-bottom:7px;font-size:11px;color:#475569;font-style:italic;max-height:40px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>',
+            '<div id="sfSelectionPreview" style="background:#f1f5f9;border-left:3px solid #0f172a;border-radius:4px;padding:5px 8px;margin-bottom:7px;font-size:11px;color:#475569;font-style:italic;max-height:40px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>',
             '<textarea id="sfCommentInput" placeholder="Write feedback, question, or revision note..." style="width:100%;height:65px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;color:#0f172a;padding:8px;font-size:12px;box-sizing:border-box;resize:none;font-family:inherit"></textarea>',
             '<div id="sfConfidentialOptionWrap" style="margin-top:6px;margin-bottom:6px;display:flex;align-items:center;gap:6px;background:#fef3c7;border:1px solid #fde68a;padding:6px 9px;border-radius:6px">',
             '  <input type="checkbox" id="sfConfidentialCheckbox" style="cursor:pointer;accent-color:#d97706;width:15px;height:15px;margin:0">',
@@ -2360,7 +2701,7 @@ function injectNativeReviewerMatchmaking(force) {
             '</div>',
             '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">',
             '  <button type="button" onclick="window.__sfCancelPopover()" style="background:none;border:none;color:#64748b;font-size:12px;font-weight:600;cursor:pointer;padding:4px 8px">Cancel</button>',
-            '  <button type="button" onclick="__sfSaveAnnotation()" style="background:#4f46e5;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
+            '  <button type="button" onclick="window.__sfSaveAnnotation()" style="background:#0f172a;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">Save Markup</button>',
             '</div>'
         ].join('\n');
         isolateOverlayElement(pop);
@@ -2376,23 +2717,24 @@ function injectNativeReviewerMatchmaking(force) {
         var pop = document.getElementById('sfSelectionPopover');
         if (pop && pop.contains(e.target)) return;
 
-        if (_sfSelectingInCanvas) {
+        var sel = window.getSelection();
+        var hasText = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
+        var docCanvas = document.getElementById('sfDocCanvas');
+        var inCanvas = false;
+        if (docCanvas && sel && sel.anchorNode && sel.focusNode) {
+            inCanvas = docCanvas.contains(sel.anchorNode) || docCanvas.contains(sel.focusNode);
+        }
+
+        if (hasText && inCanvas) {
             _sfSelectingInCanvas = false;
-            var dx = Math.abs(e.clientX - _sfMouseDownX);
-            var dy = Math.abs(e.clientY - _sfMouseDownY);
-            var sel = window.getSelection();
-            var hasText = sel && !sel.isCollapsed && sel.toString().trim().length >= 2;
-            if (dx > 5 || dy > 5 || hasText) {
-                setTimeout(function() {
-                    handleTextSelection(e);
-                }, 10);
-                return;
-            }
+            setTimeout(function() {
+                handleTextSelection(e);
+            }, 10);
+            return;
         }
 
         // If clicked outside popover with no active canvas selection, dismiss
-        if (pop && pop.style.display === 'flex') {
-            var sel = window.getSelection();
+        if (pop && pop.style.display !== 'none') {
             if (!sel || sel.isCollapsed) {
                 hideSelectionPopover();
             }
@@ -2404,14 +2746,17 @@ function injectNativeReviewerMatchmaking(force) {
         var docCanvas = document.getElementById('sfDocCanvas');
         if (!docCanvas) return;
 
-        if (!docCanvas._sfCanvasMouseDownBound) {
-            docCanvas._sfCanvasMouseDownBound = true;
+        if (!docCanvas._sfCanvasBound) {
+            docCanvas._sfCanvasBound = true;
             docCanvas.addEventListener('mousedown', function(e) {
                 var pop = document.getElementById('sfSelectionPopover');
                 if (pop && pop.contains(e.target)) return;
                 _sfMouseDownX = e.clientX;
                 _sfMouseDownY = e.clientY;
                 _sfSelectingInCanvas = true;
+            });
+            docCanvas.addEventListener('mouseup', function(e) {
+                handleDocMouseUp(e);
             });
         }
 
@@ -2440,13 +2785,16 @@ function injectNativeReviewerMatchmaking(force) {
 
     // ── Handle Mouseup Text Selection ──────────────────────────────────────
     function handleTextSelection(e) {
+        if (currentUserInfo && currentUserInfo.isAuthorOnly) {
+            return;
+        }
         ensureSelectionPopover();
         var pop = document.getElementById('sfSelectionPopover');
         if (pop && pop.contains(e.target)) return;
 
         var selection = window.getSelection();
         if (!selection || selection.isCollapsed) {
-            if (pop && pop.style.display === 'flex') hideSelectionPopover();
+            if (pop && pop.style.display !== 'none') hideSelectionPopover();
             return;
         }
 
@@ -2471,9 +2819,22 @@ function injectNativeReviewerMatchmaking(force) {
         var pid = getSelectedParagraphId(selection);
         currentSelectedRange = { text: text, paragraphId: pid };
 
-        // Position popover
-        var clientX = (e && typeof e.clientX === 'number') ? e.clientX : (window.innerWidth / 2);
-        var clientY = (e && typeof e.clientY === 'number') ? e.clientY : (window.innerHeight / 2);
+        // Position popover relative to text selection bounding box
+        var clientX = window.innerWidth / 2;
+        var clientY = window.innerHeight / 2;
+
+        if (selection.rangeCount > 0) {
+            var range = selection.getRangeAt(0);
+            var rect = range.getBoundingClientRect();
+            if (rect && rect.width > 0 && rect.bottom > 0) {
+                clientX = rect.left + (rect.width / 2);
+                clientY = rect.bottom;
+            } else if (e && typeof e.clientX === 'number' && e.clientX > 0) {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+        }
+
         showSelectionPopover(clientX, clientY, text);
     }
 
@@ -2500,18 +2861,19 @@ function injectNativeReviewerMatchmaking(force) {
             preview.textContent = '\u201c' + trimmed + '\u201d';
         }
 
-        pop.style.display = 'flex';
-        // Position near the mouse but keep within viewport
-        var popW = 320, popH = 210;
-        var left = Math.min(x, window.innerWidth - popW - 16);
-        var top  = y + 14;
-        if (top + popH > window.innerHeight) top = Math.max(10, y - popH - 10);
-        pop.style.left = Math.max(10, left) + 'px';
-        pop.style.top  = Math.max(10, top)  + 'px';
+        pop.style.setProperty('display', 'flex', 'important');
+        // Position near the selection but keep within viewport
+        var popW = 320, popH = 220;
+        var left = Math.min(Math.max(16, x - (popW / 2)), window.innerWidth - popW - 20);
+        var top  = y + 10;
+        if (top + popH > window.innerHeight) top = Math.max(10, y - popH - 14);
+        pop.style.setProperty('left', left + 'px', 'important');
+        pop.style.setProperty('top', top + 'px', 'important');
 
         var txt = document.getElementById('sfCommentInput');
         if (txt) {
             txt.value = '';
+            setTimeout(function() { txt.focus(); }, 50);
             txt.onkeydown = function(ev) {
                 if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
                     ev.preventDefault();
@@ -2529,7 +2891,7 @@ function injectNativeReviewerMatchmaking(force) {
 
     function hideSelectionPopover() {
         var pop = document.getElementById('sfSelectionPopover');
-        if (pop) pop.style.display = 'none';
+        if (pop) pop.style.setProperty('display', 'none', 'important');
         // Clear any native browser selection left over
         var sel = window.getSelection();
         if (sel) sel.removeAllRanges();
@@ -2619,11 +2981,11 @@ function injectNativeReviewerMatchmaking(force) {
             if (data && data.annotation) {
                 cachedAnnotations.push(data.annotation);
                 if (data.annotation.user_role === 'Editor') {
-                    __sfFilterCommentsTab('editor');
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('editor');
                 } else if (data.annotation.confidential_to_editor) {
-                    __sfFilterCommentsTab('reviewer_to_editor');
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('reviewer_to_editor');
                 } else {
-                    __sfFilterCommentsTab('reviewer');
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('reviewer');
                 }
                 renderAnnotationsList(cachedAnnotations);
                 if (injectedMark && injectedMark.parentNode) {
@@ -2721,9 +3083,9 @@ function injectNativeReviewerMatchmaking(force) {
             docCanvas.innerHTML = [
                 '<div style="text-align:center;padding:90px 24px;color:#64748b">',
                 '  <div style="position:relative;width:52px;height:52px;margin:0 auto 16px">',
-                '    <div style="position:absolute;inset:0;border-radius:50%;border:4px solid #e2e8f0;border-top:4px solid #4f46e5;animation:sfSpin 1s linear infinite"></div>',
+                '    <div style="position:absolute;inset:0;border-radius:50%;border:4px solid #e2e8f0;border-top:4px solid #0f172a;animation:sfSpin 1s linear infinite"></div>',
                 '    <div style="position:absolute;inset:7px;border-radius:50%;border:3px solid transparent;border-right:3px solid #3b82f6;animation:sfSpin 1.4s linear infinite reverse"></div>',
-                '    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#4f46e5">SF</div>',
+                '    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#0f172a">SF</div>',
                 '  </div>',
                 '  <div style="font-size:16px;font-weight:700;color:#1e293b">Rendering in-platform manuscript&hellip;</div>',
                 '  <div style="font-size:12px;color:#64748b;margin-top:6px">Loading formatted text and paragraph structures for Submission #' + esc(activeSid) + '</div>',
@@ -2748,15 +3110,29 @@ function injectNativeReviewerMatchmaking(force) {
                         applyUserRoleGating();
                     }
                     loadAnnotations(activeSid);
+                    loadAuthorLetters(activeSid);
                     initSplitterResize();
                 } else if (data && data.error) {
                     if (docCanvas) {
+                        if (data.is_released) {
+                            docCanvas.innerHTML = [
+                                '<div style="background:#ffffff;border:1px solid #fecaca;padding:36px 28px;border-radius:16px;max-width:560px;margin:50px auto;text-align:center;box-shadow:0 10px 25px rgba(220,38,38,0.06)">',
+                                '  <div style="font-size:42px;margin-bottom:12px">⛔</div>',
+                                '  <div style="font-weight:800;font-size:18px;color:#991b1b;margin-bottom:8px">Review Assignment Concluded</div>',
+                                '  <div style="font-size:13px;color:#475569;margin-bottom:20px;line-height:1.6">' + esc(data.error) + '</div>',
+                                '  <button onclick="__sfClose()" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;border-radius:8px;padding:9px 20px;font-size:12px;font-weight:700;cursor:pointer">← Return to Dashboard</button>',
+                                '</div>'
+                            ].join('\n');
+                            var commentsList = document.getElementById('sfCommentsList');
+                            if (commentsList) commentsList.innerHTML = '<div style="color:#94a3b8;font-size:12px;text-align:center;padding:30px 10px">Access to comments is closed for this released assignment.</div>';
+                            return;
+                        }
                         docCanvas.innerHTML = [
                             '<div style="background:#fef2f2;border:1px solid #fecaca;padding:24px;border-radius:12px;color:#991b1b;max-width:540px;margin:30px auto;text-align:center">',
                             '  <div style="font-size:32px;margin-bottom:8px">📄</div>',
                             '  <div style="font-weight:800;font-size:15px;margin-bottom:6px">Document Unavailable for Submission #' + esc(activeSid) + '</div>',
                             '  <div style="font-size:13px;color:#b91c1c;margin-bottom:16px;line-height:1.5">' + esc(data.error) + '</div>',
-                            '  <button onclick="__sfOpenPaperPickerModal()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">📚 Browse Available Papers</button>',
+                            '  <button onclick="__sfOpenPaperPickerModal()" style="background:#0f172a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">📚 Browse Available Papers</button>',
                             '</div>'
                         ].join('\n');
                     }
@@ -2770,16 +3146,77 @@ function injectNativeReviewerMatchmaking(force) {
             });
     }
 
-    // ── Load Annotations ───────────────────────────────────────────────────
-    function loadAnnotations(sid) {
+    // ── Load Annotations & Live Sync ───────────────────────────────────────
+    var _sfLiveAnnotationTimer = null;
+    var _sfLastAnnotationsSig = '';
+    var cachedAuthorLetters = [];
+
+    function startLiveAnnotationSync() {
+        stopLiveAnnotationSync();
+        _sfLiveAnnotationTimer = setInterval(function () {
+            if (!window.__sfModalOpen || !currentSubmissionId) return;
+            var viewerPanel = document.getElementById('sfPanelViewer');
+            if (!viewerPanel || viewerPanel.style.display === 'none') return;
+            var popover = document.getElementById('sfSelectionPopover');
+            if (popover && popover.style.display !== 'none') return;
+            loadAnnotations(currentSubmissionId, true);
+            loadAuthorLetters(currentSubmissionId, true);
+        }, 4000);
+    }
+
+    function stopLiveAnnotationSync() {
+        if (_sfLiveAnnotationTimer) {
+            clearInterval(_sfLiveAnnotationTimer);
+            _sfLiveAnnotationTimer = null;
+        }
+    }
+
+    function loadAuthorLetters(sid, silent) {
+        if (!sid) return;
+        fetch(getContextBase() + '/scholarflow/authorLetters?submissionId=' + sid, { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data && data.letters) {
+                    cachedAuthorLetters = data.letters;
+                    var badge = document.getElementById('sfCountAuthorLetters');
+                    if (badge) badge.textContent = cachedAuthorLetters.length;
+
+                    // If Author and has letters received, automatically show the Letters tab on initial open
+                    if (currentUserInfo && currentUserInfo.isAuthorOnly && cachedAuthorLetters.length > 0 && !window.__sfAuthorViewedTab) {
+                        window.__sfAuthorViewedTab = true;
+                        currentCommentFilter = 'author_letters';
+                        var tabs = document.querySelectorAll('.sf-comment-filter-btn');
+                        tabs.forEach(function (t) { t.style.background = 'none'; t.style.color = '#64748b'; });
+                        var letterTab = document.getElementById('sfCommentTab-author_letters');
+                        if (letterTab) {
+                            letterTab.style.background = '#ffffff';
+                            letterTab.style.color = '#0f172a';
+                            letterTab.style.fontWeight = '700';
+                            letterTab.style.boxShadow = '0 1px 2px rgba(0,0,0,0.06)';
+                        }
+                    }
+
+                    if (currentCommentFilter === 'author_letters') {
+                        renderAnnotationsList(cachedAnnotations);
+                    }
+                }
+            })
+            .catch(function () {});
+    }
+
+    function loadAnnotations(sid, silentIfUnchanged) {
         var url = getContextBase() + '/scholarflow/annotations?submissionId=' + sid;
         fetch(url, { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data && data.annotations) {
+                    var sig = JSON.stringify(data.annotations.map(function (a) {
+                        return [a.id, a.comment, a.confidential_to_editor];
+                    }));
+                    if (silentIfUnchanged && sig === _sfLastAnnotationsSig) return;
+                    _sfLastAnnotationsSig = sig;
                     cachedAnnotations = data.annotations;
                     renderAnnotationsList(cachedAnnotations);
-                    applyHighlightsToDocument();
                 }
             })
             .catch(function () {});
@@ -2824,9 +3261,11 @@ function injectNativeReviewerMatchmaking(force) {
         var elCountEditor = document.getElementById('sfCountEditor');
         var elCountRevToEd = document.getElementById('sfCountReviewerToEditor');
         var elCountRev = document.getElementById('sfCountReviewer');
+        var elCountLetters = document.getElementById('sfCountAuthorLetters');
         if (elCountEditor) elCountEditor.textContent = editorComments.length;
         if (elCountRevToEd) elCountRevToEd.textContent = reviewerToEditorComments.length;
         if (elCountRev) elCountRev.textContent = reviewerComments.length;
+        if (elCountLetters) elCountLetters.textContent = cachedAuthorLetters ? cachedAuthorLetters.length : 0;
 
         // Tailor the reviewer-to-editor tab for current role
         var revToEdTab = document.getElementById('sfCommentTab-reviewer_to_editor');
@@ -2864,6 +3303,33 @@ function injectNativeReviewerMatchmaking(force) {
         }
 
         // Apply active filter
+        if (currentCommentFilter === 'author_letters') {
+            clearHighlightsFromDocument();
+            window.__sfVisibleAnnotations = [];
+            if (!cachedAuthorLetters || cachedAuthorLetters.length === 0) {
+                container.innerHTML = '<div style="color:#94a3b8;font-size:13px;text-align:center;padding:36px 10px">📨 No editorial letters dispatched to the author yet.<br>' + (isEditor ? 'Click "✉️ Send to Author" above to compile feedback and dispatch a real-time letter.' : 'When the editor dispatches a decision or feedback letter, it appears here in real-time.') + '</div>';
+                return;
+            }
+            var lHtml = '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:11px;color:#1e40af;line-height:1.5">' +
+                '<strong>📨 Editorial Decisions &amp; Feedback:</strong> Letters dispatched to the author in real-time.' +
+            '</div>';
+            cachedAuthorLetters.forEach(function (l) {
+                lHtml += '<div style="background:#ffffff;border:1px solid #e2e8f0;border-left:4px solid #0f172a;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:8px;flex-wrap:wrap">' +
+                      '<span style="font-weight:700;font-size:12px;color:#0f172a">👤 ' + esc(l.editor_name || 'Editorial Office') + '</span>' +
+                      '<span style="font-size:10px;font-weight:600;color:#64748b;background:#f1f5f9;padding:2px 6px;border-radius:4px">' + esc(l.sent_at || '') + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:11px;font-weight:700;color:#0f172a;margin-bottom:8px">Source: ' + esc(l.source_label || 'All Feedback') + '</div>' +
+                    '<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.55;color:#334155;background:#f8fafc;padding:10px 12px;border-radius:6px;border:1px solid #e2e8f0;max-height:260px;overflow-y:auto;margin:0">' + esc(l.letter || '') + '</pre>' +
+                    '<div style="display:flex;justify-content:flex-end;margin-top:8px">' +
+                      '<button onclick="navigator.clipboard.writeText(this.getAttribute(\'data-txt\')); this.textContent=\'✅ Copied\';" data-txt="' + esc(l.letter || '').replace(/"/g, '&quot;') + '" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer">📋 Copy Letter</button>' +
+                    '</div>' +
+                '</div>';
+            });
+            container.innerHTML = lHtml;
+            return;
+        }
+
         var displayList = [];
         if (currentCommentFilter === 'editor') {
             displayList = editorComments;
@@ -2878,6 +3344,10 @@ function injectNativeReviewerMatchmaking(force) {
             currentCommentFilter = 'editor';
             displayList = editorComments;
         }
+
+        window.__sfVisibleAnnotations = displayList;
+        clearHighlightsFromDocument();
+        applyHighlightsToDocument(displayList);
 
         if (displayList.length === 0) {
             var emptyMsg = 'No comments made by an editor recorded yet.<br>As an editor, highlight text on the left to add editorial comments.';
@@ -2951,7 +3421,7 @@ function injectNativeReviewerMatchmaking(force) {
             if (isConfidential) {
                 sendCardAction = '<span style="font-size:10px;font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:2px 7px;border-radius:6px;display:inline-flex;align-items:center;gap:3px" title="Confidential comment: strictly read-only for Editor. Cannot be shared with author or reviewers.">🔒 Read-Only (Cannot Share)</span>';
             } else if (isEditor && a.user_role !== 'Editor') {
-                sendCardAction = '<button type="button" onclick="event.stopPropagation(); window.__sfOpenSendToAuthorModal(\'' + esc(a.user_name).replace(/'/g, "\\'") + '\')" title="Send this reviewer\'s feedback to author" style="background:none;border:none;color:#4f46e5;font-size:11px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline">✉️ Send to Author</button>';
+                sendCardAction = '<button type="button" onclick="event.stopPropagation(); window.__sfOpenSendToAuthorModal(\'' + esc(a.user_name).replace(/'/g, "\\'") + '\')" title="Send this reviewer\'s feedback to author" style="background:none;border:none;color:#0f172a;font-size:11px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline">✉️ Send to Author</button>';
             }
 
             var confidentialBadge = '';
@@ -3020,13 +3490,39 @@ function injectNativeReviewerMatchmaking(force) {
         });
     }
 
-    // ── Apply Highlights to Document Reader ────────────────────────────────
-    function applyHighlightsToDocument() {
+    // ── Clear & Apply Highlights to Document Reader ────────────────────────
+    function clearHighlightsFromDocument() {
         var docCanvas = document.getElementById('sfDocCanvas');
-        if (!docCanvas || !cachedAnnotations || cachedAnnotations.length === 0) return;
+        if (!docCanvas) return;
+        var marks = docCanvas.querySelectorAll('mark.sf-highlight');
+        marks.forEach(function (m) {
+            var parent = m.parentNode;
+            if (!parent) return;
+            while (m.firstChild) {
+                parent.insertBefore(m.firstChild, m);
+            }
+            parent.removeChild(m);
+            parent.normalize();
+        });
+        docCanvas.querySelectorAll('.sf-paragraph-active').forEach(function (p) {
+            p.classList.remove('sf-paragraph-active');
+        });
+        var oldCallout = document.getElementById('sfFocusCallout');
+        if (oldCallout && oldCallout.parentNode) {
+            oldCallout.parentNode.removeChild(oldCallout);
+        }
+    }
 
-        for (var i = 0; i < cachedAnnotations.length; i++) {
-            var a = cachedAnnotations[i];
+    function applyHighlightsToDocument(listOverride) {
+        if (currentUserInfo && currentUserInfo.isAuthorOnly) {
+            return;
+        }
+        var docCanvas = document.getElementById('sfDocCanvas');
+        var list = Array.isArray(listOverride) ? listOverride : (window.__sfVisibleAnnotations || cachedAnnotations);
+        if (!docCanvas || !list || list.length === 0) return;
+
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i];
             var snippet = a.selected_text ? a.selected_text.trim() : '';
             if (!snippet || snippet.length < 2) continue;
 
@@ -3185,18 +3681,12 @@ function injectNativeReviewerMatchmaking(force) {
             var isMark = (targetEl.tagName === 'MARK' || targetEl.classList.contains('sf-highlight'));
 
             if (isMark) {
-                // Apply distinct golden-yellow pulsing highlight ONLY to the inline mark!
+                // Apply distinct golden-yellow pulsing highlight ONLY to the inline mark (never the whole paragraph)
                 targetEl.classList.add('sf-active-comment-mark');
                 targetEl.style.backgroundColor = '#facc15';
                 targetEl.style.color = '#000000';
                 targetEl.style.boxShadow = '0 0 0 4px rgba(250,204,21,0.85), 0 0 24px rgba(250,204,21,0.9)';
                 targetEl.style.fontWeight = '700';
-
-                // Highlight parent paragraph with subtle active border
-                var parentP = targetEl.closest('p, h1, h2, h3, div');
-                if (parentP && parentP !== docCanvas) {
-                    parentP.classList.add('sf-paragraph-active');
-                }
             } else {
                 // Target is a paragraph or heading block: NEVER apply sf-active-comment-mark or mark styles to whole block!
                 targetEl.classList.add('sf-paragraph-active');
@@ -3278,10 +3768,10 @@ function injectNativeReviewerMatchmaking(force) {
         });
 
         if (tabName === 'viewer') {
-            if (btnViewer) { btnViewer.classList.add('active'); btnViewer.style.borderBottomColor = '#4f46e5'; btnViewer.style.color = '#4f46e5'; btnViewer.style.fontWeight = '700'; }
+            if (btnViewer) { btnViewer.classList.add('active'); btnViewer.style.borderBottomColor = '#0f172a'; btnViewer.style.color = '#0f172a'; btnViewer.style.fontWeight = '700'; }
             if (panelViewer) panelViewer.style.display = 'flex';
         } else if (tabName === 'prescreen') {
-            if (btnPre) { btnPre.classList.add('active'); btnPre.style.borderBottomColor = '#4f46e5'; btnPre.style.color = '#4f46e5'; btnPre.style.fontWeight = '700'; }
+            if (btnPre) { btnPre.classList.add('active'); btnPre.style.borderBottomColor = '#0f172a'; btnPre.style.color = '#0f172a'; btnPre.style.fontWeight = '700'; }
             if (panelPre) panelPre.style.display = 'block';
             var repEl = document.getElementById('sfModalReport') || document.querySelector('.sf-prescreen-report');
             var isBlank = !repEl || repEl.innerHTML.trim() === '' || repEl.innerHTML.indexOf('Loading editorial') !== -1;
@@ -3290,7 +3780,7 @@ function injectNativeReviewerMatchmaking(force) {
                 runAnalysis(sid, false, 'global');
             }
         } else if (tabName === 'reviewers') {
-            if (btnRec) { btnRec.classList.add('active'); btnRec.style.borderBottomColor = '#4f46e5'; btnRec.style.color = '#4f46e5'; btnRec.style.fontWeight = '700'; }
+            if (btnRec) { btnRec.classList.add('active'); btnRec.style.borderBottomColor = '#0f172a'; btnRec.style.color = '#0f172a'; btnRec.style.fontWeight = '700'; }
             if (panelRec) panelRec.style.display = 'block';
             var rec = document.getElementById('sfReviewers');
             if (!rec || rec.innerHTML.trim() === '' || lastEvaluatedSubmissions['reviewers'] !== sid) {
@@ -3320,7 +3810,7 @@ function injectNativeReviewerMatchmaking(force) {
             '      <circle id="sfProgressCircle" class="sf-progress-circle-dyn" cx="50" cy="50" r="42" fill="none" stroke="url(#sfGrad)" stroke-width="7" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264" style="transition:stroke-dashoffset 0.4s ease"></circle>',
             '      <defs>',
             '        <linearGradient id="sfGrad" x1="0%" y1="0%" x2="100%" y2="100%">',
-            '          <stop offset="0%" stop-color="#4f46e5"></stop>',
+            '          <stop offset="0%" stop-color="#0f172a"></stop>',
             '          <stop offset="100%" stop-color="#06b6d4"></stop>',
             '        </linearGradient>',
             '      </defs>',
@@ -3329,10 +3819,10 @@ function injectNativeReviewerMatchmaking(force) {
             '      <span id="sfProgressPercent" class="sf-progress-percent-dyn" style="font-size:22px;font-weight:900;color:#0f172a;letter-spacing:-0.5px">0%</span>',
             '    </div>',
             '  </div>',
-            '  <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.3px">' + (forceRefresh ? 'Evaluating manuscript from scratch with AI model...' : 'AI Pre-Screening Analysis in progress...') + '</div>',
-            '  <div id="sfProgressStep" class="sf-progress-step-dyn" style="font-size:13px;font-weight:600;color:#4f46e5;margin-top:8px;transition:all 0.3s">Initializing deep manuscript audit...</div>',
+            '  <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.3px">' + (forceRefresh ? 'Evaluating manuscript from scratch...' : 'Pre-Screening Analysis in progress...') + '</div>',
+            '  <div id="sfProgressStep" class="sf-progress-step-dyn" style="font-size:13px;font-weight:600;color:#0f172a;margin-top:8px;transition:all 0.3s">Initializing deep manuscript audit...</div>',
             '  <div style="width:100%;max-width:440px;height:8px;background:#f1f5f9;border-radius:999px;margin:20px auto 14px;overflow:hidden;border:1px solid #e2e8f0;position:relative">',
-            '    <div id="sfProgressBar" class="sf-progress-bar-dyn" style="width:0%;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
+            '    <div id="sfProgressBar" class="sf-progress-bar-dyn" style="width:0%;height:100%;background:#0f172a;border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
             '  </div>',
             '  <div style="font-size:12px;color:#64748b;max-width:480px;margin:0 auto">Auditing structure, methodology rigor, and research novelty for Submission #' + esc(activeSid) + '</div>',
             '</div>'
@@ -3362,7 +3852,7 @@ function injectNativeReviewerMatchmaking(force) {
             }
 
             if (currentProgress < 100) {
-                setBadge('ANALYZING (' + Math.round(currentProgress) + '%)', '#eef2ff', '#4338ca', '#c7d2fe');
+                setBadge('ANALYZING (' + Math.round(currentProgress) + '%)', '#eef2ff', '#0f172a', '#c7d2fe');
             }
         };
 
@@ -3398,7 +3888,7 @@ function injectNativeReviewerMatchmaking(force) {
                                 } else if (data.cached) {
                                     setCacheTag('⚡ Cached LLM (' + mdl + ')', '#dcfce7', '#059669', true);
                                 } else {
-                                    setCacheTag('🤖 Live LLM Generated (' + mdl + (data.tokens ? ' • ' + data.tokens + ' tokens' : '') + ')', '#eef2ff', '#4338ca', true);
+                                    setCacheTag('🤖 Live LLM Generated (' + mdl + (data.tokens ? ' • ' + data.tokens + ' tokens' : '') + ')', '#eef2ff', '#0f172a', true);
                                 }
                                 showReport(data.report);
                             }, 200);
@@ -3451,7 +3941,7 @@ function injectNativeReviewerMatchmaking(force) {
                 '      <circle id="sfReviewerProgressCircle" cx="50" cy="50" r="42" fill="none" stroke="url(#sfGradReviewer)" stroke-width="7" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264" style="transition:stroke-dashoffset 0.4s ease"></circle>',
                 '      <defs>',
                 '        <linearGradient id="sfGradReviewer" x1="0%" y1="0%" x2="100%" y2="100%">',
-                '          <stop offset="0%" stop-color="#4f46e5"></stop>',
+                '          <stop offset="0%" stop-color="#0f172a"></stop>',
                 '          <stop offset="100%" stop-color="#06b6d4"></stop>',
                 '        </linearGradient>',
                 '      </defs>',
@@ -3461,9 +3951,9 @@ function injectNativeReviewerMatchmaking(force) {
                 '    </div>',
                 '  </div>',
                 '  <div style="font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.3px">' + (forceRefresh ? 'Evaluating Reviewer Matchmaking from scratch with AI model...' : 'Matching Reviewers with AI for Submission #' + esc(activeSid) + '...') + '</div>',
-                '  <div id="sfReviewerProgressStep" style="font-size:13px;font-weight:600;color:#4f46e5;margin-top:8px;transition:all 0.3s">Initializing reviewer expertise &amp; manuscript audit...</div>',
+                '  <div id="sfReviewerProgressStep" style="font-size:13px;font-weight:600;color:#0f172a;margin-top:8px;transition:all 0.3s">Initializing reviewer expertise &amp; manuscript audit...</div>',
                 '  <div style="width:100%;max-width:440px;height:8px;background:#f1f5f9;border-radius:999px;margin:20px auto 14px;overflow:hidden;border:1px solid #e2e8f0;position:relative">',
-                '    <div id="sfReviewerProgressBar" style="width:0%;height:100%;background:linear-gradient(90deg,#4f46e5,#06b6d4);border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
+                '    <div id="sfReviewerProgressBar" style="width:0%;height:100%;background:#0f172a;border-radius:999px;transition:width 0.4s ease;box-shadow:0 0 10px rgba(79,70,229,0.3)"></div>',
                 '  </div>',
                 '  <div style="font-size:12px;color:#64748b;max-width:480px;margin:0 auto">Evaluating subject expertise, publication history, and reviewer quota for Submission #' + esc(activeSid) + '</div>',
                 '</div>'
@@ -3490,12 +3980,13 @@ function injectNativeReviewerMatchmaking(force) {
             if (badge && currentProgress < 100) {
                 badge.textContent = 'MATCHING (' + Math.round(currentProgress) + '%)';
                 badge.style.background = '#eef2ff';
-                badge.style.color = '#4338ca';
+                badge.style.color = '#0f172a';
                 badge.style.borderColor = '#c7d2fe';
             }
         };
 
         updateReviewerProgress(5, 'Fetching reviewer profiles & active workloads from OJS...');
+        releasedReviewersMap = {};
 
         fetch(getContextBase() + '/scholarflow/releasedReviewers?submissionId=' + activeSid, { credentials: 'same-origin' })
             .then(function(r) { return r.json(); })
@@ -3557,10 +4048,12 @@ function injectNativeReviewerMatchmaking(force) {
                                     } else {
                                         cacheTag.textContent = '🤖 Live LLM Evaluated (' + mdl + ')';
                                         cacheTag.style.background = '#eef2ff';
-                                        cacheTag.style.color = '#4338ca';
+                                        cacheTag.style.color = '#0f172a';
                                         cacheTag.style.display = 'inline-block';
                                     }
                                 }
+                                window.__sfLastReviewerRecsBySid = window.__sfLastReviewerRecsBySid || {};
+                                window.__sfLastReviewerRecsBySid[String(activeSid)] = data.recommendations;
                                 showReviewers(data.recommendations);
                             }, 200);
                         } else {
@@ -3572,6 +4065,8 @@ function injectNativeReviewerMatchmaking(force) {
                     });
                 } else if (startData && startData.recommendations) {
                     updateReviewerProgress(100, 'LLM reviewer evaluation complete!');
+                    window.__sfLastReviewerRecsBySid = window.__sfLastReviewerRecsBySid || {};
+                    window.__sfLastReviewerRecsBySid[String(activeSid)] = startData.recommendations;
                     showReviewers(startData.recommendations);
                 } else if (startData && startData.error) {
                     showReviewerError(startData.error);
@@ -3587,15 +4082,27 @@ function injectNativeReviewerMatchmaking(force) {
         var container = document.getElementById('sfReviewers');
         if (!container) return;
 
-        if (recs.length === 0) {
-            container.innerHTML = '<div style="color:#64748b;text-align:center;padding:30px;">No reviewers matched.</div>';
+        var activeRecs = (recs || []).filter(function(rec) {
+            return !releasedReviewersMap[rec.id];
+        });
+
+        var badge = document.getElementById('sfReviewerBadge');
+        if (badge && badge.textContent && badge.textContent.indexOf('MATCHED') === 0) {
+            badge.textContent = 'MATCHED (' + activeRecs.length + ' CANDIDATES)';
+        }
+
+        if (activeRecs.length === 0) {
+            var emptyMsg = (recs && recs.length > 0)
+                ? 'All matched candidates have been released for this submission.'
+                : 'No reviewers matched.';
+            container.innerHTML = '<div style="color:#64748b;text-align:center;padding:30px;">' + emptyMsg + '</div>';
             return;
         }
 
         var html = '<div style="font-size:13px;color:#64748b;margin:0 0 16px;font-weight:600">Candidates ranked by semantic topical compatibility &amp; declared interests:</div>';
 
-        for (var i = 0; i < recs.length; i++) {
-            var rec = recs[i];
+        for (var i = 0; i < activeRecs.length; i++) {
+            var rec = activeRecs[i];
             var score = rec.score || 0;
             var badgeBg = score >= 80 ? '#ecfdf5' : (score >= 50 ? '#fffbeb' : '#fef2f2');
             var badgeColor = score >= 80 ? '#047857' : (score >= 50 ? '#b45309' : '#b91c1c');
@@ -3611,14 +4118,14 @@ function injectNativeReviewerMatchmaking(force) {
             }
 
             var safeNameAssign = esc(rec.name).replace(/'/g, "\\'");
-            var assignBtn = '<button type="button" onclick="window.__sfAssignReviewerInOJS(\'' + safeNameAssign + '\')" title="Assign this reviewer directly in OJS" style="background:#4f46e5;border:none;color:#ffffff;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(79,70,229,0.3)">Assign in OJS &rarr;</button>';
+            var assignBtn = '<button type="button" onclick="event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); window.__sfAssignReviewerInOJS(\'' + safeNameAssign + '\')" title="Assign this reviewer directly in OJS" style="background:#0f172a;border:none;color:#ffffff;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(79,70,229,0.3)">Assign Reviewer &rarr;</button>';
 
             html += [
                 '<div style="background:#ffffff;border:1px solid #e2e8f0;',
                 'border-radius:12px;padding:18px;margin-bottom:14px;display:flex;flex-direction:column;gap:10px;box-shadow:0 2px 6px rgba(0,0,0,.03)">',
                   '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">',
                     '<div style="display:flex;align-items:center;gap:12px">',
-                      '<div style="width:32px;height:32px;border-radius:50%;background:#4f46e5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">',
+                      '<div style="width:32px;height:32px;border-radius:50%;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">',
                         rec.name.charAt(0).toUpperCase(),
                       '</div>',
                       '<span style="font-weight:700;font-size:15px;color:#0f172a">' + esc(rec.name) + '</span>',
@@ -3629,8 +4136,8 @@ function injectNativeReviewerMatchmaking(force) {
                       actionBtn,
                     '</div>',
                   '</div>',
-                  '<div style="font-size:13px;color:#475569"><strong style="color:#4f46e5">Declared Expertise:</strong> ' + esc(rec.interests || 'None declared') + '</div>',
-                  '<div style="font-size:13px;color:#334155;line-height:1.6;background:#f8fafc;padding:10px 14px;border-radius:8px;border-left:3px solid #4f46e5">' + esc(rec.reason) + '</div>',
+                  '<div style="font-size:13px;color:#475569"><strong style="color:#0f172a">Declared Expertise:</strong> ' + esc(rec.interests || 'None declared') + '</div>',
+                  '<div style="font-size:13px;color:#334155;line-height:1.6;background:#f8fafc;padding:10px 14px;border-radius:8px;border-left:3px solid #0f172a">' + esc(rec.reason) + '</div>',
                 '</div>'
             ].join('');
         }
@@ -3653,7 +4160,7 @@ function injectNativeReviewerMatchmaking(force) {
                 '  <div style="font-size:32px;margin-bottom:8px">👥</div>',
                 '  <div style="font-weight:800;font-size:15px;margin-bottom:6px">Reviewer Matchmaking Notice</div>',
                 '  <div style="font-size:13px;color:#b91c1c;margin-bottom:16px;line-height:1.5">' + esc(msg) + '</div>',
-                '  <button onclick="__sfOpenPaperPickerModal()" style="background:#4f46e5;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">📚 Select an Active Paper</button>',
+                '  <button onclick="__sfOpenPaperPickerModal()" style="background:#0f172a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 2px 6px rgba(79,70,229,0.3)">📚 Select an Active Paper</button>',
                 '</div>'
             ].join('\n');
         }
@@ -3729,13 +4236,13 @@ function injectNativeReviewerMatchmaking(force) {
     // ── Comment Tabs Filtering ─────────────────────────────────────────────
     window.__sfFilterCommentsTab = function (tab) {
         currentCommentFilter = tab;
-        var tabs = ['editor', 'reviewer_to_editor', 'reviewer'];
+        var tabs = ['editor', 'reviewer_to_editor', 'reviewer', 'author_letters'];
         tabs.forEach(function (t) {
             var b = document.getElementById('sfCommentTab-' + t);
             if (b) {
                 if (t === tab) {
                     b.style.background = '#ffffff';
-                    b.style.color = '#4f46e5';
+                    b.style.color = '#0f172a';
                     b.style.fontWeight = '700';
                     b.style.boxShadow = '0 1px 2px rgba(0,0,0,0.06)';
                 } else {
@@ -3784,10 +4291,23 @@ function injectNativeReviewerMatchmaking(force) {
             });
 
             var revList = Object.keys(reviewerMap).sort();
+            var totalComments = 0;
+            cachedAnnotations.forEach(function (a) {
+                if (!a.confidential_to_editor) totalComments++;
+            });
+
+            if (totalComments > 0) {
+                var allOpt = document.createElement('option');
+                allOpt.value = '__all__';
+                allOpt.textContent = '🌟 All Comments Combined (' + totalComments + ')';
+                sourceSel.appendChild(allOpt);
+            }
+
             revList.forEach(function (rName, idx) {
                 var opt = document.createElement('option');
                 opt.value = rName;
-                opt.textContent = 'Reviewer ' + (idx + 1) + ' (' + rName + ')';
+                var rCount = cachedAnnotations.filter(function (a) { return a.user_name === rName && !a.confidential_to_editor; }).length;
+                opt.textContent = 'Reviewer ' + (idx + 1) + ' [' + rName + '] — ' + rCount + ' comment' + (rCount === 1 ? '' : 's') + ' (Author receives: Reviewer ' + (idx + 1) + ')';
                 if (preselectReviewer && preselectReviewer === rName) {
                     opt.selected = true;
                 }
@@ -3797,7 +4317,11 @@ function injectNativeReviewerMatchmaking(force) {
             if (hasEditorComments) {
                 var edOpt = document.createElement('option');
                 edOpt.value = '__editor__';
-                edOpt.textContent = 'Journal Editorial Comments';
+                var edCount = cachedAnnotations.filter(function (a) { return a.user_role === 'Editor' && !a.confidential_to_editor; }).length;
+                edOpt.textContent = 'Journal Editorial Comments — ' + edCount + ' comment' + (edCount === 1 ? '' : 's');
+                if (preselectReviewer === '__editor__') {
+                    edOpt.selected = true;
+                }
                 sourceSel.appendChild(edOpt);
             }
 
@@ -3809,7 +4333,7 @@ function injectNativeReviewerMatchmaking(force) {
             }
         }
 
-        __sfUpdateSendAuthorLetter();
+        if (typeof window.__sfUpdateSendAuthorLetter === 'function') window.__sfUpdateSendAuthorLetter();
     };
 
     window.__sfCloseSendToAuthorModal = function () {
@@ -3836,9 +4360,47 @@ function injectNativeReviewerMatchmaking(force) {
         var targetComments = [];
         var sourceLabel = '';
 
-        if (selectedVal === '__editor__') {
+        if (selectedVal === '__all__') {
+            sourceLabel = 'ALL REVIEWERS AND EDITORIAL OFFICE';
+            var revMapAll = {};
+            cachedAnnotations.forEach(function (a) {
+                if (a.user_role !== 'Editor' && a.user_name && !a.confidential_to_editor) revMapAll[a.user_name] = true;
+            });
+            var revListAll = Object.keys(revMapAll).sort();
+
+            targetComments = cachedAnnotations.filter(function (a) {
+                return !a.confidential_to_editor;
+            }).map(function (a) {
+                var reviewerTag = '';
+                if (a.user_role === 'Editor') {
+                    reviewerTag = '[Editorial Office] ';
+                } else if (anonymize) {
+                    var rIdx = revListAll.indexOf(a.user_name) + 1;
+                    reviewerTag = '[Reviewer ' + (rIdx > 0 ? rIdx : 1) + '] ';
+                } else {
+                    reviewerTag = '[' + (a.user_name || 'Reviewer') + '] ';
+                }
+                return {
+                    selected_text: a.selected_text || '',
+                    comment: reviewerTag + (a.comment || '')
+                };
+            });
+
+            if (anonymize) {
+                revListAll.forEach(function (rName, rIdx) {
+                    var reg = new RegExp(rName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'gi');
+                    targetComments.forEach(function (tc) {
+                        tc.comment = tc.comment.replace(reg, 'Reviewer ' + (rIdx + 1));
+                    });
+                });
+            }
+        } else if (selectedVal === '__editor__') {
             sourceLabel = 'JOURNAL EDITORIAL OFFICE';
-            targetComments = cachedAnnotations.filter(function (a) { return a.user_role === 'Editor' && !a.confidential_to_editor; });
+            targetComments = cachedAnnotations
+                .filter(function (a) { return a.user_role === 'Editor' && !a.confidential_to_editor; })
+                .map(function (c) {
+                    return { selected_text: c.selected_text || '', comment: c.comment || '' };
+                });
         } else {
             var reviewerMap = {};
             cachedAnnotations.forEach(function (a) {
@@ -3847,7 +4409,17 @@ function injectNativeReviewerMatchmaking(force) {
             var revList = Object.keys(reviewerMap).sort();
             var revIdx = revList.indexOf(selectedVal) + 1;
             sourceLabel = anonymize ? ('REVIEWER ' + (revIdx > 0 ? revIdx : 1)) : selectedVal.toUpperCase();
-            targetComments = cachedAnnotations.filter(function (a) { return a.user_name === selectedVal && !a.confidential_to_editor; });
+            var safeAnonLabel = 'Reviewer ' + (revIdx > 0 ? revIdx : 1);
+            targetComments = cachedAnnotations
+                .filter(function (a) { return a.user_name === selectedVal && !a.confidential_to_editor; })
+                .map(function (c) {
+                    var com = c.comment || '';
+                    if (anonymize && selectedVal) {
+                        var reg = new RegExp(selectedVal.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'gi');
+                        com = com.replace(reg, safeAnonLabel);
+                    }
+                    return { selected_text: c.selected_text || '', comment: com };
+                });
         }
 
         var paperTitle = 'Current Manuscript';
@@ -3870,9 +4442,7 @@ function injectNativeReviewerMatchmaking(force) {
             title: paperTitle,
             source_label: sourceLabel,
             editor_name: (currentUserInfo && currentUserInfo.name) ? currentUserInfo.name : 'Journal Editorial Office',
-            annotations: targetComments.map(function (c) {
-                return { selected_text: c.selected_text || '', comment: c.comment || '' };
-            })
+            annotations: targetComments
         };
 
         fetch(getContextBase() + '/scholarflow/draftAuthorLetter', {
@@ -3918,6 +4488,75 @@ function injectNativeReviewerMatchmaking(force) {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+    };
+
+    window.__sfDispatchAuthorLetter = function () {
+        var letterText = document.getElementById('sfSendAuthorLetterText');
+        var sourceSel = document.getElementById('sfSendAuthorSourceSelect');
+        var status = document.getElementById('sfSendAuthorFeedbackStatus');
+        var btn = document.getElementById('sfDispatchAuthorLetterBtn');
+        if (!letterText || !letterText.value.trim()) {
+            alert('Cannot send an empty letter.');
+            return;
+        }
+
+        var sid = parseInt(currentSubmissionId || '1', 10);
+        var src = (sourceSel && sourceSel.options && sourceSel.selectedIndex >= 0)
+            ? sourceSel.options[sourceSel.selectedIndex].text
+            : 'Editorial Office';
+        var edName = (currentUserInfo && currentUserInfo.name) ? currentUserInfo.name : 'Journal Editorial Office';
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Dispatching...';
+        }
+
+        fetch(getContextBase() + '/scholarflow/sendAuthorLetter', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                submission_id: sid,
+                source_label: src,
+                editor_name: edName,
+                letter: letterText.value.trim()
+            })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '🚀 Send to Author Now';
+            }
+            if (res && res.success) {
+                if (status) {
+                    status.style.color = '#059669';
+                    status.textContent = '🚀 Dispatched to author in real-time! The author will see this in their "Letters" tab immediately.';
+                    status.style.display = 'block';
+                }
+                loadAuthorLetters(sid);
+                setTimeout(function () {
+                    if (typeof window.__sfCloseSendToAuthorModal === 'function') window.__sfCloseSendToAuthorModal();
+                }, 1600);
+            } else {
+                if (status) {
+                    status.style.color = '#dc2626';
+                    status.textContent = '❌ Failed to dispatch letter: ' + ((res && res.error) || 'Unknown error');
+                    status.style.display = 'block';
+                }
+            }
+        })
+        .catch(function (err) {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '🚀 Send to Author Now';
+            }
+            if (status) {
+                status.style.color = '#dc2626';
+                status.textContent = '❌ Network error dispatching letter: ' + err.message;
+                status.style.display = 'block';
+            }
+        });
     };
 
     // ── Re-Run Confirmation Modal ──────────────────────────────────────────
@@ -4073,16 +4712,21 @@ function injectNativeReviewerMatchmaking(force) {
         }
 
         var letter = document.getElementById('sfReleaseReviewerLetter');
-        if (letter) {
-            navigator.clipboard.writeText(letter.value);
+        if (letter && navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                navigator.clipboard.writeText(letter.value).catch(function () {});
+            } catch (_) {}
         }
 
-        // Re-render reviewers list to show released badge
-        var sid = currentSubmissionId || '1';
-        runReviewerRecommendations(sid);
+        // Re-render cached reviewers list immediately (without restarting LLM matchmaking)
+        var sid = String(currentSubmissionId || '1');
+        var cachedRecs = window.__sfLastReviewerRecsBySid && window.__sfLastReviewerRecsBySid[sid];
+        if (cachedRecs) {
+            showReviewers(cachedRecs);
+        }
 
         setTimeout(function () {
-            __sfCloseReleaseReviewerModal();
+            if (typeof window.__sfCloseReleaseReviewerModal === 'function') window.__sfCloseReleaseReviewerModal();
         }, 1500);
     };
 
@@ -4130,7 +4774,7 @@ function injectNativeReviewerMatchmaking(force) {
             .replace(/^# (.+)$/gm, '<h1 style="color:#0f172a;font-size:22px;font-weight:800;margin:1.6em 0 .8em">$1</h1>')
             .replace(/\*\*(.+?)\*\*/g, '<strong style="color:#0f172a;font-weight:700">$1</strong>')
             .replace(/\*(.+?)\*/g, '<em style="color:#475569;font-style:italic">$1</em>')
-            .replace(/^> (.+)$/gm, '<blockquote style="border-left:4px solid #4f46e5;padding:10px 18px;margin:12px 0;background:#f5f3ff;border-radius:0 8px 8px 0;color:#334155;font-style:italic">$1</blockquote>')
+            .replace(/^> (.+)$/gm, '<blockquote style="border-left:4px solid #0f172a;padding:10px 18px;margin:12px 0;background:#f5f3ff;border-radius:0 8px 8px 0;color:#334155;font-style:italic">$1</blockquote>')
             .replace(/^[-*] (.+)$/gm, '<li style="margin:6px 0;color:#334155;font-size:14px">$1</li>')
             .replace(/(<li[\s\S]*?<\/li>)/g, '<ul style="padding-left:24px;margin:.6em 0">$1</ul>')
             .replace(/\n{2,}/g, '</p><p style="margin:.8em 0;color:#334155">')
@@ -4147,45 +4791,156 @@ function injectNativeReviewerMatchmaking(force) {
     }
 
 
-    // ?? Simplify OJS UI: Remove DOIs/Tools & Replace Sub-queues with Active & Archived ??
-    function simplifyOjsUi() {
+
+    // ── ScholarFlow Complete White-Labeling & Modern UI Engine ───────────
+    function setScholarFlowFavicon() {
         try {
-            // 1. Remove DOIs and Tools from Sidebar
-            var navLinks = document.querySelectorAll('#app-nav a, .app__nav a, .pkpSideNav a, a[href*="/dois"], a[href*="/tools"]');
-            navLinks.forEach(function (link) {
-                var href = (link.getAttribute('href') || '').toLowerCase();
-                var text = (link.textContent || '').trim().toLowerCase();
-                if (href.includes('/dois') || href.includes('/doi') || text === 'dois' || text === 'doi') {
-                    var container = link.closest('li') || link.closest('.pkpSideNav__item') || link;
-                    if (container) container.style.display = 'none';
+            var head = document.getElementsByTagName('head')[0];
+            if (!head) return;
+            var link = document.querySelector("link[rel*='icon']");
+            if (!link) {
+                link = document.createElement('link');
+                link.rel = 'shortcut icon';
+                head.appendChild(link);
+            }
+            var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%234f46e5"/><path d="M18 4L8 18h7l-2 10 11-14h-7l3-10z" fill="%23ffffff"/></svg>';
+            link.type = 'image/svg+xml';
+            link.href = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+        } catch (_) {}
+    }
+
+    function rebrandUiToScholarFlow() {
+        try {
+            // 1. Browser Tab Title Rebranding
+            if (document.title) {
+                var t = document.title;
+                var orig = t;
+                t = t.replace(/Open Journal Systems/gi, 'ScholarFlow')
+                     .replace(/\bOJS\b/g, 'ScholarFlow')
+                     .replace(/\bPKP\b/g, 'ScholarFlow');
+                if (!t.toLowerCase().includes('scholarflow')) {
+                    var cleanTitle = t.replace(/^[|\s-]+|[|\s-]+$/g, '').trim();
+                    t = cleanTitle ? ('ScholarFlow • ' + cleanTitle) : 'ScholarFlow Platform';
                 }
-                if (href.includes('/management/tools') || href.includes('/tools') || text === 'tools') {
-                    var container = link.closest('li') || link.closest('.pkpSideNav__item') || link;
-                    if (container) container.style.display = 'none';
+                if (document.title !== t) document.title = t;
+            }
+
+            // 2. Favicon
+            setScholarFlowFavicon();
+
+            // 3. Top Backend Header Brand Injection
+            var sitemapBtn = document.querySelector('.app__headerAction.app__contexts, .app__contexts');
+            if (sitemapBtn) {
+                sitemapBtn.style.display = 'inline-flex';
+                sitemapBtn.setAttribute('title', 'Switch Journal');
+            }
+            var header = document.querySelector('.app__header');
+            if (header && !document.getElementById('sfHeaderBrandBadge') && !header.querySelector('.sf_header_brand')) {
+                var brandBadge = document.createElement('a');
+                brandBadge.id = 'sfHeaderBrandBadge';
+                brandBadge.href = getContextBase() || '/';
+                brandBadge.className = 'sf-header-brand-badge';
+                brandBadge.style.cssText = 'text-decoration:none;display:inline-flex;align-items:center;gap:9px;margin-right:18px;margin-left:4px;flex-shrink:0;cursor:pointer;';
+                brandBadge.innerHTML = [
+                    '<div style="width:28px;height:28px;border-radius:8px;background:#0f172a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;box-shadow:0 2px 8px rgba(79,70,229,0.4);flex-shrink:0;">⚡</div>',
+                    '<div style="display:flex;align-items:center;gap:7px;">',
+                    '  <span style="font-weight:800;font-size:15px;letter-spacing:-0.3px;color:#f8fafc;font-family:inherit;">ScholarFlow</span>',
+                    '  <span style="background:rgba(99,102,241,0.25);color:#cbd5e1;border:1px solid rgba(165,180,252,0.3);font-size:9px;font-weight:800;padding:2px 6px;border-radius:10px;letter-spacing:0.5px;">SUITE</span>',
+                    '</div>'
+                ].join('');
+                header.insertBefore(brandBadge, header.firstChild);
+            }
+
+            // 4. Scrub Context Dropdowns & Titles
+            var contextTitles = document.querySelectorAll('.app__contextTitle, .pkp_site_name, .pkp_site_name a');
+            contextTitles.forEach(function(el) {
+                if (el.id === 'sfHeaderBrandBadge') return;
+                var txt = (el.textContent || '').trim();
+                if (txt === 'Open Journal Systems' || txt === 'OJS' || txt === 'PKP') {
+                    el.textContent = 'ScholarFlow';
                 }
             });
 
-            // 2. Hide cluttered intermediate sub-queues under Editor Dashboard
-            var unwantedViewPatterns = [
-                'assigned-to-me', 'needs-editor', 'initial-review', 'needs-reviews',
-                'awaiting-reviews', 'reviews-submitted', 'reviews-overdue',
-                'revisions-requested', 'revisions-submitted', 'incomplete-submissions',
-                'external-review', 'review-all', 'copyediting', 'production', 'scheduled'
-            ];
-            unwantedViewPatterns.forEach(function (pattern) {
-                var links = document.querySelectorAll('#app-nav a[href*="currentViewId=' + pattern + '"]');
-                links.forEach(function (lnk) {
-                    var container = lnk.closest('li') || lnk.closest('.pkpSideNav__item') || lnk;
-                    if (container) container.style.display = 'none';
+            // 5. Replace Footers & Remove Legacy OJS Brand Links
+            var footers = document.querySelectorAll('.pkp_structure_footer, .pkp_brand_footer, #pkp_content_footer');
+            footers.forEach(function(f) {
+                var ojsImgs = f.querySelectorAll('img[src*="ojs"], img[src*="pkp"], a[href*="pkp.sfu.ca"]');
+                ojsImgs.forEach(function(img) {
+                    var p = img.closest('a') || img;
+                    p.style.display = 'none';
                 });
             });
 
-            // If legacy separate published/declined links exist, hide them
-            var legacyArchiveLinks = document.querySelectorAll('#app-nav a[href*="currentViewId=published"], #app-nav a[href*="currentViewId=declined"]');
-            legacyArchiveLinks.forEach(function (lnk) {
-                var container = lnk.closest('li') || lnk.closest('.pkpSideNav__item') || lnk;
-                if (container) container.style.display = 'none';
+            var mainFooter = document.querySelector('.pkp_structure_footer_wrapper, footer.app__footer');
+            if (mainFooter && !document.getElementById('sfModernGlobalFooter')) {
+                var fDiv = document.createElement('div');
+                fDiv.id = 'sfModernGlobalFooter';
+                fDiv.style.cssText = 'text-align:center;padding:18px 0;font-size:12px;font-weight:600;color:#64748b;display:flex;align-items:center;justify-content:center;gap:8px;border-top:1px solid #e2e8f0;margin-top:24px;';
+                fDiv.innerHTML = '<span style="font-size:15px;color:#0f172a;">⚡</span><span>Powered by <strong>ScholarFlow™</strong> &bull; Scholarly Publishing & Peer Review Platform</span>';
+                mainFooter.appendChild(fDiv);
+            }
+
+            // 6. Fast Text Node Replacer for any lingering "OJS" or "Open Journal Systems"
+            var targetRoot = document.querySelector('.app, .pkp_structure_page, #app, body');
+            if (targetRoot) {
+                walkAndCleanTextNodes(targetRoot);
+            }
+
+        } catch (_) {}
+    }
+
+    var _sfCleanedNodes = new WeakSet();
+    function walkAndCleanTextNodes(node) {
+        if (!node) return;
+        if (node.nodeType === 3) { // Text node
+            var val = node.nodeValue;
+            if (val && (val.includes('Open Journal Systems') || val.includes('OJS') || val.includes('Public Knowledge Project') || val.includes('PKP'))) {
+                node.nodeValue = val
+                    .replace(/Open Journal Systems/g, 'ScholarFlow')
+                    .replace(/Public Knowledge Project/g, 'ScholarFlow Platform')
+                    .replace(/\bOJS\b/g, 'ScholarFlow')
+                    .replace(/\bPKP\b/g, 'ScholarFlow');
+            }
+            return;
+        }
+        if (node.nodeType === 1) { // Element node
+            if (node.tagName === 'SCRIPT' || node.tagName === 'STYLE' || node.tagName === 'TEXTAREA' || node.tagName === 'INPUT' || node.classList.contains('sf-document-text')) {
+                return;
+            }
+            var child = node.firstChild;
+            while (child) {
+                walkAndCleanTextNodes(child);
+                child = child.nextSibling;
+            }
+        }
+    }
+
+    // ── Simplify OJS UI: Modal Detection, Clean Workflow & Navigation ──
+    function simplifyOjsUi() {
+        try {
+            // Modal detection: prevent background dashboard nav from floating over modals
+            var hasActiveModal = !!document.querySelector('.DialogOverlay, [data-cy="active-modal"], [data-cy="workflow-primary-items"], .DialogContent, [class*="SideModalBody"]');
+            if (hasActiveModal) {
+                if (!document.body.classList.contains('sf-modal-open')) {
+                    document.body.classList.add('sf-modal-open');
+                }
+            } else {
+                if (document.body.classList.contains('sf-modal-open')) {
+                    document.body.classList.remove('sf-modal-open');
+                }
+            }
+
+            // Preserve all native OJS navigation, DOIs, Tools, queues, and features intact
+            var subContainers = document.querySelectorAll('#app-nav .p-panelmenu-content-container, #app-nav .p-toggleable-content');
+            subContainers.forEach(function (el) {
+                el.style.overflow = 'visible';
             });
+
+            // Remove any duplicate injected tab bar so there is only ONE clean navbar layer
+            var dupTabs = document.getElementById('sf-dashboard-view-tabs');
+            if (dupTabs && dupTabs.parentNode) {
+                dupTabs.parentNode.removeChild(dupTabs);
+            }
         } catch (err) {
             // Safe fail
         }

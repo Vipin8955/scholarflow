@@ -105,11 +105,14 @@ class ScholarFlowHandler extends \APP\handler\Handler
         $uid = (int) $user->getId();
         try {
             if (!empty($userInfo['isReviewer'])) {
-                $hasReview = Repo::reviewAssignment()->getCollector()
-                    ->filterBySubmissionIds([$submissionId])
-                    ->filterByReviewerIds([$uid])
-                    ->getCount() > 0;
-                if ($hasReview) {
+                // Must be an active assignment: not cancelled and not declined
+                $hasActiveReview = DB::table('review_assignments')
+                    ->where('submission_id', $submissionId)
+                    ->where('reviewer_id', $uid)
+                    ->where('cancelled', 0)
+                    ->where('declined', 0)
+                    ->exists();
+                if ($hasActiveReview) {
                     return true;
                 }
             }
@@ -120,6 +123,17 @@ class ScholarFlowHandler extends \APP\handler\Handler
                     ->exists();
                 if ($hasStage) {
                     return true;
+                }
+                $userEmail = $user->getEmail();
+                if ($userEmail) {
+                    $hasAuthorEmail = DB::table('authors')
+                        ->join('publications', 'publications.publication_id', '=', 'authors.publication_id')
+                        ->where('publications.submission_id', $submissionId)
+                        ->where('authors.email', $userEmail)
+                        ->exists();
+                    if ($hasAuthorEmail) {
+                        return true;
+                    }
                 }
             }
         } catch (\Throwable $e) {
@@ -217,6 +231,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
                 $list[] = [
                     'id' => (int) $s->getId(),
                     'contextId' => $cId,
+                    'journalPath' => $journalObj ? (string) $journalObj->getPath() : '',
                     'journalName' => $journalName,
                     'journalAcronym' => strtoupper($journalAcronym),
                     'title' => $title,
@@ -355,13 +370,19 @@ class ScholarFlowHandler extends \APP\handler\Handler
         }
 
         if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            $wasCancelled = DB::table('review_assignments')
+                ->where('submission_id', $submissionId)
+                ->where('reviewer_id', (int) $user->getId())
+                ->where('cancelled', 1)
+                ->exists();
+            if ($wasCancelled) {
+                echo json_encode([
+                    'error' => 'You have been released from this review assignment as the journal has already obtained the required number of evaluations. Thank you for your contribution.',
+                    'is_released' => true
+                ]);
+                exit;
+            }
             echo json_encode(['error' => 'You are not assigned to Submission #' . $submissionId . '.']);
-            exit;
-        }
-
-        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
-            header('Content-Type: application/json');
-            echo json_encode(['error' => 'You are not authorized to export markups for this submission.']);
             exit;
         }
 
@@ -418,7 +439,20 @@ class ScholarFlowHandler extends \APP\handler\Handler
 
         $userInfo = $this->getUserRoleInfo($request);
         if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
-            echo json_encode(['error' => 'You are not authorized to access markups for this submission.']);
+            $wasCancelled = DB::table('review_assignments')
+                ->where('submission_id', $submissionId)
+                ->where('reviewer_id', (int) $user->getId())
+                ->where('cancelled', 1)
+                ->exists();
+            if ($wasCancelled) {
+                echo json_encode([
+                    'error' => 'You have been released from this review assignment as the review quota has been reached.',
+                    'is_released' => true,
+                    'annotations' => []
+                ]);
+                exit;
+            }
+            echo json_encode(['error' => 'You are not authorized to access markups for this submission.', 'annotations' => []]);
             exit;
         }
 
@@ -436,8 +470,18 @@ class ScholarFlowHandler extends \APP\handler\Handler
             //    - If a comment is confidential_to_editor: ONLY see it if it is their OWN comment ($isOwn).
             // 3. If Editor:
             //    - Can see all comments (including confidential_to_editor notes).
+            // Strict Editorial Peer Review Gate:
+            // Authors NEVER see raw peer review comments or markups.
+            // Only finalized editorial decision letters dispatched via "Send to Author" are visible to the author.
+            if (!empty($userInfo['isAuthorOnly'])) {
+                $data['annotations'] = [];
+                $data['user'] = $userInfo;
+                echo json_encode($data);
+                exit;
+            }
+
+            // Privacy Filtering for Reviewers and Editors:
             if (!empty($data['annotations'])) {
-                $isAuthorOnly = !empty($userInfo['isAuthorOnly']);
                 $isReviewer = !empty($userInfo['isReviewer']);
                 $isEditor = !empty($userInfo['isEditor']);
                 $myUserId = (int) ($userInfo['id'] ?? 0);
@@ -450,11 +494,6 @@ class ScholarFlowHandler extends \APP\handler\Handler
                     $isAnnEditor = ($annRole === 'editor');
                     $isOwn = ($myUserId && (int) ($ann['user_id'] ?? 0) === $myUserId) ||
                              ($myUserName && strtolower(trim((string) ($ann['user_name'] ?? ''))) === $myUserName);
-
-                    // Authors strictly cannot see confidential editor-only notes
-                    if ($isAuthorOnly && $isConfidential) {
-                        continue;
-                    }
 
                     // Reviewers (who are not Editors)
                     if ($isReviewer && !$isEditor) {
@@ -470,6 +509,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
 
                     $filtered[] = $ann;
                 }
+
                 $data['annotations'] = array_values($filtered);
             }
 
@@ -624,6 +664,11 @@ class ScholarFlowHandler extends \APP\handler\Handler
             exit;
         }
         $userInfo = $this->getUserRoleInfo($request);
+        if (!empty($userInfo['isAuthorOnly'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Authors cannot download raw markup reports. Only finalized editorial decision letters are accessible to authors.']);
+            exit;
+        }
 
         $submissionId = (int) $request->getUserVar('submissionId');
         if (!$submissionId) {
@@ -711,7 +756,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: #1e1b4b;
+    background: #0f172a;
     color: #ffffff;
     padding: 14px 28px;
   }
@@ -723,7 +768,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
     font-size: 15px;
   }
   .toolbar-brand span {
-    background: #4f46e5;
+    background: #334155;
     color: #fff;
     padding: 3px 8px;
     border-radius: 6px;
@@ -736,9 +781,9 @@ class ScholarFlowHandler extends \APP\handler\Handler
     align-items: center;
   }
   .btn {
-    background: #4f46e5;
+    background: #0f172a;
     color: #ffffff;
-    border: none;
+    border: 1px solid #334155;
     border-radius: 8px;
     padding: 7px 14px;
     font-size: 12px;
@@ -750,7 +795,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
     gap: 6px;
     transition: background 0.2s;
   }
-  .btn:hover { background: #4338ca; }
+  .btn:hover { background: #1e293b; }
   .btn-outline {
     background: rgba(255,255,255,0.12);
     border: 1px solid rgba(255,255,255,0.25);
@@ -767,7 +812,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
     color: #1e293b;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
-    border-left: 4px solid #4f46e5;
+    border-left: 4px solid #0f172a;
     padding: 10px 16px;
     border-radius: 8px;
     margin-top: 22px;
@@ -830,7 +875,7 @@ HTML;
 
         $userInfo = $this->getUserRoleInfo($request);
         if ($userInfo['isAuthorOnly']) {
-            echo json_encode(['error' => 'AI Pre-Screening is reserved for Journal Editors and Peer Reviewers.']);
+            echo json_encode(['error' => 'Pre-Screening is reserved for Journal Editors and Peer Reviewers.']);
             exit;
         }
 
@@ -856,6 +901,52 @@ HTML;
             exit;
         }
 
+        $publication = $submission->getCurrentPublication();
+        $title = $publication ? $publication->getLocalizedTitle() : ('Submission #' . $submissionId);
+        $abstract = $publication ? strip_tags((string) $publication->getLocalizedData('abstract')) : '';
+
+        $keywords = '';
+        if ($publication) {
+            $keywordsData = $publication->getData('keywords');
+            if (is_array($keywordsData)) {
+                $kwList = [];
+                foreach ($keywordsData as $locale => $kwArray) {
+                    if (is_array($kwArray)) {
+                        $kwList = array_merge($kwList, $kwArray);
+                    }
+                }
+                $keywords = implode(', ', array_unique($kwList));
+            }
+        }
+
+        $keywords = '';
+        if ($publication) {
+            $keywordsData = $publication->getData('keywords');
+            if (is_array($keywordsData)) {
+                $kwList = [];
+                foreach ($keywordsData as $locale => $kwArray) {
+                    if (is_array($kwArray)) {
+                        $kwList = array_merge($kwList, $kwArray);
+                    }
+                }
+                $keywords = implode(', ', array_unique($kwList));
+            }
+        }
+
+        $authorList = [];
+        if ($publication) {
+            foreach ($publication->getData('authors') ?? [] as $a) {
+                $given = is_array($a->getData('givenName')) ? reset($a->getData('givenName')) : $a->getData('givenName');
+                $family = is_array($a->getData('familyName')) ? reset($a->getData('familyName')) : $a->getData('familyName');
+                $aff = is_array($a->getData('affiliation')) ? reset($a->getData('affiliation')) : $a->getData('affiliation');
+                $nm = trim($given . ' ' . $family);
+                if ($nm) {
+                    $authorList[] = $aff ? ($nm . ' (' . $aff . ')') : $nm;
+                }
+            }
+        }
+        $authorsStr = implode('; ', $authorList);
+
         $forceRefresh = (bool) $request->getUserVar('refresh');
         $requestedScope = trim((string) $request->getUserVar('scope'));
         $isAsync = !empty($request->getUserVar('async'));
@@ -876,7 +967,13 @@ HTML;
             $endpoint = $isAsync ? '/api/analyze/start' : '/api/analyze';
             $response = $client->post($backendUrl . $endpoint, [
                 'json' => [
-                    'file_path' => $filePath,
+                    // Strict privacy: LLM never receives access to paper files or full journal text
+                    'file_path' => '',
+                    'submission_id' => $submissionId,
+                    'title' => $title,
+                    'abstract' => $abstract,
+                    'keywords' => $keywords,
+                    'authors' => $authorsStr,
                     'force_refresh' => $forceRefresh,
                     'user_id' => (int) ($userInfo['id'] ?? 0),
                     'scope' => $scope,
@@ -1009,6 +1106,20 @@ HTML;
             exit;
         }
 
+        $keywords = '';
+        if ($publication) {
+            $keywordsData = $publication->getData('keywords');
+            if (is_array($keywordsData)) {
+                $kwList = [];
+                foreach ($keywordsData as $locale => $kwArray) {
+                    if (is_array($kwArray)) {
+                        $kwList = array_merge($kwList, $kwArray);
+                    }
+                }
+                $keywords = implode(', ', array_unique($kwList));
+            }
+        }
+
         $authorList = [];
         foreach ($publication->getData('authors') ?? [] as $a) {
             $given = is_array($a->getData('givenName')) ? reset($a->getData('givenName')) : $a->getData('givenName');
@@ -1044,6 +1155,7 @@ HTML;
                     'title' => $title,
                     'abstract' => $abstract,
                     'authors' => $authorsStr,
+                    'keywords' => $keywords,
                     'reviewers' => $candidates,
                     'force_refresh' => $forceRefresh,
                 ],
@@ -1132,6 +1244,64 @@ HTML;
     }
 
     /**
+     * Handle POST /scholarflow/sendAuthorLetter
+     * Dispatches decision feedback letter directly to the author in real-time.
+     */
+    public function sendAuthorLetter(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        $userInfo = $this->getUserRoleInfo($request);
+        if (!$user || !$userInfo['isEditor']) {
+            echo json_encode(['error' => 'Only Journal Editors can dispatch letters to authors.']);
+            exit;
+        }
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 30]);
+            $response = $client->post($backendUrl . '/api/send_author_letter', ['json' => $input]);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['error' => 'Failed to dispatch letter: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Handle GET /scholarflow/authorLetters?submissionId=...
+     * Retrieves all letters dispatched to authors for this submission.
+     */
+    public function authorLetters(array $args, $request): void
+    {
+        header('Content-Type: application/json');
+        $user = $request->getUser();
+        if (!$user) {
+            echo json_encode(['error' => 'Authentication required.']);
+            exit;
+        }
+        $submissionId = (int) $request->getUserVar('submissionId');
+        $userInfo = $this->getUserRoleInfo($request);
+        if (!$this->userCanAccessSubmission($submissionId, $user, $userInfo)) {
+            echo json_encode(['error' => 'Unauthorized submission access.']);
+            exit;
+        }
+        @session_write_close();
+        $backendUrl = rtrim((string) (Config::getVar('scholarflow', 'backend_url') ?: getenv('SCHOLARFLOW_BACKEND_URL') ?: 'http://127.0.0.1:8000'), '/');
+
+        try {
+            $client = new \GuzzleHttp\Client(['timeout' => 20]);
+            $response = $client->get($backendUrl . '/api/author_letters', ['query' => ['submission_id' => $submissionId]]);
+            echo $response->getBody()->getContents();
+        } catch (\Exception $e) {
+            echo json_encode(['error' => 'Failed to retrieve letters: ' . $e->getMessage(), 'letters' => []]);
+        }
+        exit;
+    }
+
+    /**
      * Handle POST /scholarflow/draftReleaseLetter
      * Drafts a quota-reached reviewer release email via LLM.
      */
@@ -1180,6 +1350,24 @@ HTML;
             if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $input = json_decode(file_get_contents('php://input'), true) ?: [];
                 $input['released_by'] = (string) ($userInfo['name'] ?? '');
+
+                $subId = (int) ($input['submission_id'] ?? 0);
+                $revId = (int) ($input['reviewer_id'] ?? 0);
+                if ($subId > 0 && $revId > 0) {
+                    try {
+                        // Immediately cancel the review assignment in OJS MySQL
+                        DB::table('review_assignments')
+                            ->where('submission_id', $subId)
+                            ->where('reviewer_id', $revId)
+                            ->update([
+                                'cancelled' => 1,
+                                'date_cancelled' => \Illuminate\Support\Carbon::now()
+                            ]);
+                    } catch (\Throwable $t) {
+                        // Fallback safely
+                    }
+                }
+
                 $response = $client->post($backendUrl . '/api/released_reviewers', ['json' => $input]);
                 echo $response->getBody()->getContents();
             } else {
