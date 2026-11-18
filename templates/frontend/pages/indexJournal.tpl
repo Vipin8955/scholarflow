@@ -211,45 +211,11 @@
 			<div class="sf_journals_grid">
 				{foreach from=$topCompletedJournals item=j}
 					<article class="sf_journal_card">
-						{* Journal Cover Image or Professional Fallback Placeholder *}
-						<div class="sf_card_cover_box">
-							{if $j.cover_url}
-								<img src="{$j.cover_url|escape}" alt="{$j.name|escape} Cover" class="sf_card_cover_img" />
-							{else}
-								<div class="sf_card_cover_placeholder sf_cover_{$j.path|escape}">
-									<div class="sf_cover_pattern_overlay"></div>
-									<div class="sf_cover_inner">
-										<div class="sf_cover_top">
-											<span class="sf_cover_brand_tag">ScholarFlow Series</span>
-											<span class="sf_cover_acronym_pill">{$j.acronym|escape}</span>
-										</div>
-										<div class="sf_cover_emblem">
-											{if $j.path == 'jcs'}
-												<span class="sf_emblem_icon">⚡</span>
-											{elseif $j.path == 'jeas'}
-												<span class="sf_emblem_icon">🌱</span>
-											{elseif $j.path == 'jms'}
-												<span class="sf_emblem_icon">🩺</span>
-											{elseif $j.path == 'jast'}
-												<span class="sf_emblem_icon">🔬</span>
-											{else}
-												<span class="sf_emblem_icon">📚</span>
-											{/if}
-										</div>
-										<div class="sf_cover_bottom">
-											<span class="sf_cover_oa_tag">Open Access Journal</span>
-										</div>
-									</div>
-								</div>
-							{/if}
-						</div>
-
-						{* Card Main Content *}
 						<div class="sf_card_body">
 							<div class="sf_card_meta_strip">
 								<span class="sf_card_category">{$j.category|escape}</span>
-								{if $j.volume_info}
-									<span class="sf_card_volume">{$j.volume_info|escape}</span>
+								{if $j.status_badge}
+									<span class="sf_card_status_badge">{$j.status_badge|escape}</span>
 								{/if}
 							</div>
 
@@ -259,9 +225,26 @@
 								</a>
 							</h3>
 
+							<div class="sf_card_meta_sub">
+								<span class="sf_card_acronym_pill">{$j.acronym|escape}</span>
+								<span class="sf_card_dot">&bull;</span>
+								<span class="sf_card_access_pill">Open Access</span>
+								{if $j.total_submissions > 0}
+									<span class="sf_card_dot">&bull;</span>
+									<span class="sf_card_subs_count">{$j.total_submissions} {if $j.total_submissions == 1}Manuscript{else}Manuscripts{/if}</span>
+								{/if}
+							</div>
+
 							<p class="sf_card_desc">
 								{$j.description|escape}
 							</p>
+
+							{if $j.latest_article}
+								<div class="sf_card_article_preview">
+									<div class="sf_article_label">Recent Research Manuscript:</div>
+									<div class="sf_article_title">&ldquo;{$j.latest_article|escape}&rdquo;</div>
+								</div>
+							{/if}
 
 							<div class="sf_card_actions">
 								<a href="{$j.url|escape}" class="sf_btn_view_journal">

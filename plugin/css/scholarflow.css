@@ -2213,12 +2213,15 @@ dropdown.app__contexts ul {
 .sf_journal_card {
     background: #ffffff !important;
     border: 1px solid #e2e8f0 !important;
-    border-radius: 12px !important;
-    overflow: hidden !important;
+    border-radius: 14px !important;
+    padding: 26px 28px !important;
     display: flex !important;
     flex-direction: column !important;
+    justify-content: space-between !important;
     transition: all 0.22s ease !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03) !important;
+    box-shadow: 0 2px 8px -1px rgba(15, 23, 42, 0.04) !important;
+    box-sizing: border-box !important;
+    position: relative !important;
 }
 
 .sf_journal_card:hover {
@@ -2227,119 +2230,12 @@ dropdown.app__contexts ul {
     box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.08) !important;
 }
 
-.sf_card_cover_box {
-    width: 100% !important;
-    height: 175px !important;
-    overflow: hidden !important;
-    position: relative !important;
-}
-
-.sf_card_cover_img {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    display: block !important;
-}
-
-.sf_card_cover_placeholder {
-    width: 100% !important;
-    height: 100% !important;
-    position: relative !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
-    padding: 18px 20px !important;
-    box-sizing: border-box !important;
-    color: #ffffff !important;
-}
-
-.sf_cover_jcs {
-    background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 55%, #312e81 100%) !important;
-}
-
-.sf_cover_jeas {
-    background: linear-gradient(135deg, #064e3b 0%, #065f46 55%, #047857 100%) !important;
-}
-
-.sf_cover_jms {
-    background: linear-gradient(135deg, #0c4a6e 0%, #0369a1 55%, #0284c7 100%) !important;
-}
-
-.sf_cover_jast {
-    background: linear-gradient(135deg, #1e293b 0%, #334155 55%, #475569 100%) !important;
-}
-
-.sf_cover_pattern_overlay {
-    position: absolute !important;
-    inset: 0 !important;
-    opacity: 0.12 !important;
-    background-image: radial-gradient(#ffffff 1.2px, transparent 1.2px) !important;
-    background-size: 16px 16px !important;
-    pointer-events: none !important;
-}
-
-.sf_cover_inner {
-    position: relative !important;
-    z-index: 2 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: space-between !important;
-    height: 100% !important;
-}
-
-.sf_cover_top {
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: center !important;
-}
-
-.sf_cover_brand_tag {
-    font-size: 10px !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-    opacity: 0.85 !important;
-}
-
-.sf_cover_acronym_pill {
-    background: rgba(255, 255, 255, 0.18) !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
-    font-size: 11px !important;
-    font-weight: 800 !important;
-    padding: 2px 8px !important;
-    border-radius: 6px !important;
-    letter-spacing: 0.04em !important;
-}
-
-.sf_cover_emblem {
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    font-size: 38px !important;
-    text-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-}
-
-.sf_cover_bottom {
-    display: flex !important;
-    align-items: center !important;
-}
-
-.sf_cover_oa_tag {
-    font-size: 9.5px !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
-    background: rgba(0, 0, 0, 0.25) !important;
-    padding: 3px 8px !important;
-    border-radius: 4px !important;
-    display: inline-block !important;
-}
-
 .sf_card_body {
-    padding: 22px 22px 20px 22px !important;
+    padding: 0 !important;
     display: flex !important;
     flex-direction: column !important;
     flex: 1 !important;
+    height: 100% !important;
 }
 
 .sf_card_meta_strip {
@@ -2361,18 +2257,57 @@ dropdown.app__contexts ul {
     border: 1px solid #e0e7ff !important;
 }
 
-.sf_card_volume {
-    font-size: 11.5px !important;
-    font-weight: 600 !important;
+.sf_card_status_badge {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    color: #166534 !important;
+    background: #dcfce7 !important;
+    padding: 3px 9px !important;
+    border-radius: 5px !important;
+    border: 1px solid #bbf7d0 !important;
+}
+
+.sf_card_meta_sub {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin-bottom: 12px !important;
+    font-size: 12px !important;
     color: #64748b !important;
+    flex-wrap: wrap !important;
+}
+
+.sf_card_acronym_pill {
+    font-weight: 800 !important;
+    color: #0f172a !important;
+    background: #f1f5f9 !important;
+    padding: 2px 7px !important;
+    border-radius: 4px !important;
+    font-size: 11px !important;
+    border: 1px solid #e2e8f0 !important;
+    letter-spacing: 0.03em !important;
+}
+
+.sf_card_dot {
+    color: #cbd5e1 !important;
+}
+
+.sf_card_access_pill {
+    color: #0369a1 !important;
+    font-weight: 600 !important;
+}
+
+.sf_card_subs_count {
+    color: #475569 !important;
+    font-weight: 600 !important;
 }
 
 .sf_card_title {
-    font-size: 17px !important;
+    font-size: 18px !important;
     font-weight: 700 !important;
     color: #0f172a !important;
     line-height: 1.35 !important;
-    margin: 0 0 10px 0 !important;
+    margin: 0 0 6px 0 !important;
 }
 
 .sf_card_title_link {
@@ -2387,15 +2322,43 @@ dropdown.app__contexts ul {
 
 .sf_card_desc {
     font-size: 13.5px !important;
-    color: #64748b !important;
-    line-height: 1.55 !important;
-    margin: 0 0 20px 0 !important;
+    color: #475569 !important;
+    line-height: 1.6 !important;
+    margin: 0 0 16px 0 !important;
     flex: 1 !important;
     display: -webkit-box !important;
     -webkit-line-clamp: 3 !important;
     -webkit-box-orient: vertical !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
+}
+
+.sf_card_article_preview {
+    background: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 8px !important;
+    padding: 10px 14px !important;
+    margin: 0 0 18px 0 !important;
+}
+
+.sf_article_label {
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+    margin-bottom: 4px !important;
+}
+
+.sf_article_title {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #1e293b !important;
+    line-height: 1.4 !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
 }
 
 .sf_card_actions {

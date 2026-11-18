@@ -73,32 +73,36 @@ class ScholarFlowPlugin extends GenericPlugin
                 $templateManager->assign('allJournals', $journalDao->getAll(true)->toArray());
             }
 
-            // Retrieve Top 3 Completed/Published Journals dynamically from OJS Database
+            // Retrieve Top 3 Completed Journals dynamically based on actual project completion data
             $pdo = \Illuminate\Support\Facades\DB::connection()->getPdo();
             if ($pdo) {
                 $sql = "
                     SELECT j.journal_id, j.path,
-                           latest_i.issue_id, latest_i.volume, latest_i.number, latest_i.year, latest_i.date_published,
-                           it.setting_value AS issue_title,
-                           jn.setting_value AS journal_name,
-                           jd.setting_value AS journal_desc,
-                           ja.setting_value AS journal_acronym,
-                           jab.setting_value AS journal_abbrev
+                           (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'name' LIMIT 1) AS journal_name,
+                           (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'acronym' LIMIT 1) AS journal_acronym,
+                           (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'abbreviation' LIMIT 1) AS journal_abbrev,
+                           (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) AS journal_desc,
+                           (SELECT COUNT(*) FROM submissions WHERE context_id = j.journal_id) AS total_submissions,
+                           (SELECT COUNT(*) FROM review_assignments ra JOIN submissions s ON ra.submission_id = s.submission_id WHERE s.context_id = j.journal_id) AS total_reviews,
+                           (SELECT COUNT(*) FROM edit_decisions ed JOIN submissions s ON ed.submission_id = s.submission_id WHERE s.context_id = j.journal_id) AS total_decisions,
+                           (SELECT ps.setting_value FROM submissions s 
+                            JOIN publications p ON s.current_publication_id = p.publication_id 
+                            JOIN publication_settings ps ON p.publication_id = ps.publication_id AND ps.setting_name = 'title' 
+                            WHERE s.context_id = j.journal_id 
+                            ORDER BY s.submission_id DESC LIMIT 1) AS latest_article_title
                     FROM journals j
-                    INNER JOIN (
-                        SELECT journal_id, MAX(issue_id) AS max_issue_id
-                        FROM issues
-                        WHERE published = 1
-                        GROUP BY journal_id
-                    ) mi ON j.journal_id = mi.journal_id
-                    INNER JOIN issues latest_i ON mi.max_issue_id = latest_i.issue_id
-                    LEFT JOIN issue_settings it ON latest_i.issue_id = it.issue_id AND it.setting_name = 'title'
-                    LEFT JOIN journal_settings jn ON j.journal_id = jn.journal_id AND jn.setting_name = 'name'
-                    LEFT JOIN journal_settings jd ON j.journal_id = jd.journal_id AND jd.setting_name = 'description'
-                    LEFT JOIN journal_settings ja ON j.journal_id = ja.journal_id AND ja.setting_name = 'acronym'
-                    LEFT JOIN journal_settings jab ON j.journal_id = jab.journal_id AND jab.setting_name = 'abbreviation'
                     WHERE j.enabled = 1
-                    ORDER BY latest_i.date_published DESC, j.journal_id ASC
+                    ORDER BY total_submissions DESC, 
+                             (CASE WHEN (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) IS NOT NULL 
+                                        AND (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) != ''
+                                        AND (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) NOT LIKE '%test journal%' 
+                                   THEN 2 
+                                   WHEN (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) IS NOT NULL 
+                                        AND (SELECT setting_value FROM journal_settings WHERE journal_id = j.journal_id AND setting_name = 'description' LIMIT 1) != ''
+                                   THEN 1 
+                                   ELSE 0 END) DESC,
+                             total_reviews DESC, 
+                             j.journal_id ASC
                     LIMIT 3
                 ";
                 $stmt = $pdo->query($sql);
@@ -107,33 +111,37 @@ class ScholarFlowPlugin extends GenericPlugin
                 $dispatcher = $request->getDispatcher();
 
                 $categoryMap = [
-                    'jcs' => 'Computer Science & Cybersecurity',
+                    'test' => 'Interdisciplinary Science & Technology',
+                    'jcs'  => 'Computer Science & Cybersecurity',
+                    'jms'  => 'Medical & Surgical Innovations',
                     'jeas' => 'Environmental & Agricultural Sciences',
-                    'jms' => 'Medical & Surgical Innovations',
-                    'jast' => 'Applied Science & Engineering',
                     'jbms' => 'Biomedical Engineering',
-                    'test' => 'Interdisciplinary Studies'
+                    'jast' => 'Applied Science & Engineering'
                 ];
 
                 foreach ($topJournalsRaw as $row) {
                     $jPath = $row['path'];
                     $journalUrl = $dispatcher ? $dispatcher->url($request, Application::ROUTE_PAGE, $jPath, 'index') : ($baseUrl . '/index.php/' . $jPath);
                     $cleanDesc = trim(strip_tags($row['journal_desc'] ?? ''));
-                    if (empty($cleanDesc)) {
+                    if (empty($cleanDesc) || $cleanDesc === 'None') {
                         $cleanDesc = 'A peer-reviewed academic journal published under ScholarFlow Open Access guidelines.';
                     }
 
-                    $volInfo = '';
-                    if (!empty($row['volume'])) {
-                        $volInfo = 'Vol. ' . $row['volume'];
-                        if (!empty($row['number'])) {
-                            $volInfo .= ' No. ' . $row['number'];
-                        }
-                        if (!empty($row['year'])) {
-                            $volInfo .= ' (' . $row['year'] . ')';
-                        }
-                    } elseif (!empty($row['issue_title'])) {
-                        $volInfo = $row['issue_title'];
+                    $subsCount = (int) ($row['total_submissions'] ?? 0);
+                    $reviewsCount = (int) ($row['total_reviews'] ?? 0);
+                    $decisionsCount = (int) ($row['total_decisions'] ?? 0);
+
+                    // Authentic, distinct completion status per journal
+                    if ($subsCount > 1) {
+                        $statusBadge = $subsCount . ' Manuscripts • Active Review';
+                    } elseif ($decisionsCount > 0) {
+                        $statusBadge = 'Editorial Decision Recorded';
+                    } elseif ($reviewsCount > 0) {
+                        $statusBadge = 'Peer Review Completed';
+                    } elseif ($subsCount === 1) {
+                        $statusBadge = 'Active Submission • Review Stage';
+                    } else {
+                        $statusBadge = 'Editorial Board Established';
                     }
 
                     $topCompletedJournals[] = [
@@ -144,10 +152,10 @@ class ScholarFlowPlugin extends GenericPlugin
                         'abbreviation' => $row['journal_abbrev'] ?? '',
                         'description' => $cleanDesc,
                         'category' => $categoryMap[$jPath] ?? 'Scholarly Research',
-                        'volume_info' => $volInfo,
-                        'issue_title' => $row['issue_title'] ?? '',
-                        'url' => $journalUrl,
-                        'cover_url' => null
+                        'status_badge' => $statusBadge,
+                        'total_submissions' => $subsCount,
+                        'latest_article' => $row['latest_article_title'] ?? '',
+                        'url' => $journalUrl
                     ];
                 }
                 $templateManager->assign('topCompletedJournals', $topCompletedJournals);
