@@ -212,75 +212,29 @@
 		</div>
 	</section>
 
-	{* ── 6. Structured Journal Information & Metadata ── *}
+	{* ── 6. Submissions & Archival Access ── *}
 	<section class="sf_about_section sf_info_section">
-		<div class="sf_info_grid">
-			{* Left: Journal Metadata Card *}
-			<div class="sf_info_card">
-				<h3 class="sf_info_card_title">🏛️ Journal Specifications</h3>
-				<table class="sf_metadata_table">
-					<tbody>
-						<tr>
-							<td class="sf_meta_key">Journal Title</td>
-							<td class="sf_meta_val"><strong>{$currentContext->getLocalizedName()|escape}</strong></td>
-						</tr>
-						{if $currentContext && $currentContext->getLocalizedData('acronym')}
-							<tr>
-								<td class="sf_meta_key">Journal Acronym</td>
-								<td class="sf_meta_val"><span class="sf_meta_badge">{$currentContext->getLocalizedData('acronym')|escape}</span></td>
-							</tr>
-						{/if}
-						<tr>
-							<td class="sf_meta_key">Publishing Platform</td>
-							<td class="sf_meta_val">ScholarFlow™ Editorial Platform</td>
-						</tr>
-						<tr>
-							<td class="sf_meta_key">Peer Review Method</td>
-							<td class="sf_meta_val">Double-Blind Peer Review</td>
-						</tr>
-						<tr>
-							<td class="sf_meta_key">Access Model</td>
-							<td class="sf_meta_val"><span class="sf_meta_badge sf_badge_green">Open Access</span></td>
-						</tr>
-						{if $currentContext && $currentContext->getLocalizedData('contactName')}
-							<tr>
-								<td class="sf_meta_key">Editorial Contact</td>
-								<td class="sf_meta_val">{$currentContext->getLocalizedData('contactName')|escape}</td>
-							</tr>
-						{/if}
-						{if $currentContext && $currentContext->getLocalizedData('contactEmail')}
-							<tr>
-								<td class="sf_meta_key">Contact Inquiries</td>
-								<td class="sf_meta_val"><a href="mailto:{$currentContext->getLocalizedData('contactEmail')|escape}" class="sf_contact_link">{$currentContext->getLocalizedData('contactEmail')|escape}</a></td>
-							</tr>
-						{/if}
-					</tbody>
-				</table>
+		<div class="sf_cta_card">
+			<h3 class="sf_cta_title">✍️ Submissions &amp; Archival Access</h3>
+			<p class="sf_cta_desc">Authors are invited to submit original, unpublished manuscripts through the ScholarFlow online submission portal. Submissions are tracked and evaluated in real-time.</p>
+
+			<div class="sf_cta_buttons">
+				<a href="{url page="submission" op="wizard"}" class="sf_btn_submit">
+					<span>➕ Submit a Manuscript</span>
+				</a>
+				<a href="{url page="issue" op="archive"}" class="sf_btn_archives">
+					<span>📚 Browse Published Issues</span>
+				</a>
 			</div>
 
-			{* Right: Action Callout Card *}
-			<div class="sf_cta_card">
-				<h3 class="sf_cta_title">✍️ Submissions &amp; Archival Access</h3>
-				<p class="sf_cta_desc">Authors are invited to submit original, unpublished manuscripts through the ScholarFlow online submission portal. Submissions are tracked and evaluated in real-time.</p>
-
-				<div class="sf_cta_buttons">
-					<a href="{url page="submission" op="wizard"}" class="sf_btn_submit">
-						<span>➕ Submit a Manuscript</span>
-					</a>
-					<a href="{url page="issue" op="archive"}" class="sf_btn_archives">
-						<span>📚 Browse Published Issues</span>
-					</a>
-				</div>
-
-				{if $currentContext && $currentContext->getLocalizedData('about')}
-					<div class="sf_custom_about_content">
-						<h4 style="font-size:14px;font-weight:700;color:#0f172a;margin:18px 0 8px 0;">Additional Journal Information</h4>
-						<div style="font-size:13.5px;color:#475569;line-height:1.6;">
-							{$currentContext->getLocalizedData('about')}
-						</div>
+			{if $currentContext && $currentContext->getLocalizedData('about')}
+				<div class="sf_custom_about_content">
+					<h4 style="font-size:14px;font-weight:700;color:#0f172a;margin:18px 0 8px 0;">Additional Journal Information</h4>
+					<div style="font-size:13.5px;color:#475569;line-height:1.6;">
+						{$currentContext->getLocalizedData('about')}
 					</div>
-				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 	</section>
 
