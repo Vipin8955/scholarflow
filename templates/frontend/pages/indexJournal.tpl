@@ -49,21 +49,6 @@
 						</a>
 					{/if}
 				</div>
-
-				<div class="sf_hero_features_strip">
-					<div class="sf_hero_feat_item">
-						<span class="sf_feat_check">✓</span>
-						<span>Double-Blind Peer Review</span>
-					</div>
-					<div class="sf_hero_feat_item">
-						<span class="sf_feat_check">✓</span>
-						<span>Immediate Open Access</span>
-					</div>
-					<div class="sf_hero_feat_item">
-						<span class="sf_feat_check">✓</span>
-						<span>Digital DOIs &amp; Archiving</span>
-					</div>
-				</div>
 			</div>
 
 			{* Right Side: Animated ScholarFlow Brand Visual *}
@@ -195,9 +180,6 @@
 						<span style="font-size:12px;font-weight:700;background:#f1f5f9;color:#334155;padding:3px 10px;border-radius:12px;border:1px solid #cbd5e1;">{count($journalSubmissions)}</span>
 					{/if}
 				</h2>
-				<p style="font-size:14px;color:#64748b;margin:4px 0 0 0;">
-					Scholarly articles and research manuscripts associated with {$currentJournal->getLocalizedName()|escape}.
-				</p>
 			</div>
 			{if $currentUser && $hasEditorialRole}
 				<a href="{url page="dashboard"}" class="sf_archive_link" style="white-space:nowrap;font-weight:600;">
