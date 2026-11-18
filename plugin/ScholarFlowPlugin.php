@@ -168,6 +168,21 @@ class ScholarFlowPlugin extends GenericPlugin
         $requestedPage = ($router && method_exists($router, 'getRequestedPage')) ? (string) $router->getRequestedPage($request) : '';
         $requestedOp = ($router && method_exists($router, 'getRequestedOp')) ? (string) $router->getRequestedOp($request) : '';
 
+        // Assign platform stats and journals when accessing admin console
+        if ($requestedPage === 'admin') {
+            try {
+                $pdo = \Illuminate\Support\Facades\DB::connection()->getPdo();
+                $journalDao = \APP\core\Application::getContextDao();
+                $allJournals = iterator_to_array($journalDao->getAll(true)->toIterator());
+                $templateManager->assign([
+                    'allJournals' => $allJournals,
+                    'adminStatJournals' => count($allJournals),
+                    'adminStatUsers' => $pdo ? (int) $pdo->query('SELECT COUNT(*) FROM users')->fetchColumn() : 0,
+                    'adminStatSubmissions' => $pdo ? (int) $pdo->query('SELECT COUNT(*) FROM submissions')->fetchColumn() : 0,
+                ]);
+            } catch (\Throwable $e) {}
+        }
+
         // ── Preserve all OJS Navigation Features and Options in ScholarFlow Top Bar ──
         $menu = $templateManager->getState('menu');
         if (is_array($menu)) {
