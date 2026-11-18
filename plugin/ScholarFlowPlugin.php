@@ -86,8 +86,9 @@ class ScholarFlowPlugin extends GenericPlugin
         // ── Preserve all OJS Navigation Features and Options in ScholarFlow Top Bar ──
         $menu = $templateManager->getState('menu');
         if (is_array($menu)) {
-            // Remove "Start A New Submission" from Editor Dashboard submenu so it does not clutter editor queues
-            if (isset($menu['dashboards']['submenu']['newSubmission'])) {
+            // Only remove "Start A New Submission" from Editor Dashboard submenu so it does not clutter editor queues
+            // For Authors (mySubmissions), newSubmission must remain available!
+            if ($requestedOp === 'editorial' && isset($menu['dashboards']['submenu']['newSubmission'])) {
                 unset($menu['dashboards']['submenu']['newSubmission']);
             }
 

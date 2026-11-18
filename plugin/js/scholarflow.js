@@ -317,6 +317,14 @@
             ? document.querySelector('h1.app__pageHeading')
             : null;
 
+        var isAuthorPage = window.location.pathname.indexOf('/authorDashboard/') !== -1 || window.location.href.indexOf('/dashboard/mySubmissions') !== -1;
+        var isReviewerPage = window.location.pathname.indexOf('/reviewer/') !== -1 || window.location.href.indexOf('/dashboard/reviewAssignments') !== -1;
+
+        if (isAuthorPage) {
+            // Authors only get native OJS author workflow and actions
+            return;
+        }
+
         if ((targetContainer || reviewerTabs || pageHeading) && !document.getElementById('sfNativeWorkflowActionsWrap')) {
             var actionsWrap = document.createElement('div');
             actionsWrap.id = 'sfNativeWorkflowActionsWrap';
@@ -352,40 +360,42 @@
                 var activeSid = getActiveReviewerModalSubmissionId() || sid || currentSubmissionId || '1';
                 window.__sfOpenInScreenReader(activeSid, 'viewer');
             };
-
-            var aiBtn = document.createElement('button');
-            aiBtn.id = 'sfNativeWorkflowAiBtn';
-            aiBtn.className = 'pkp_button scholarflow-native-btn-ai';
-            aiBtn.type = 'button';
-            aiBtn.style.cssText = [
-                'display:inline-flex !important',
-                'align-items:center !important',
-                'gap:6px !important',
-                'background:rgba(239, 246, 255, 0.75) !important',
-                'backdrop-filter:blur(8px) !important',
-                '-webkit-backdrop-filter:blur(8px) !important',
-                'border:1px solid rgba(191, 219, 254, 0.85) !important',
-                'color:#1d4ed8 !important',
-                'font-weight:700 !important',
-                'font-size:12px !important',
-                'padding:7px 14px !important',
-                'border-radius:8px !important',
-                'box-shadow:0 2px 8px rgba(29, 78, 216, 0.08) !important',
-                'cursor:pointer !important',
-                'vertical-align:middle !important',
-                'transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important'
-            ].join(';');
-            aiBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>Pre-Screening</span>';
-            aiBtn.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                var activeSid = getActiveReviewerModalSubmissionId() || sid || currentSubmissionId || '1';
-                window.__sfOpenInScreenReader(activeSid, 'prescreen');
-            };
-
             actionsWrap.appendChild(readerBtn);
-            actionsWrap.appendChild(aiBtn);
+
+            if (!isReviewerPage) {
+                var aiBtn = document.createElement('button');
+                aiBtn.id = 'sfNativeWorkflowAiBtn';
+                aiBtn.className = 'pkp_button scholarflow-native-btn-ai';
+                aiBtn.type = 'button';
+                aiBtn.style.cssText = [
+                    'display:inline-flex !important',
+                    'align-items:center !important',
+                    'gap:6px !important',
+                    'background:rgba(239, 246, 255, 0.75) !important',
+                    'backdrop-filter:blur(8px) !important',
+                    '-webkit-backdrop-filter:blur(8px) !important',
+                    'border:1px solid rgba(191, 219, 254, 0.85) !important',
+                    'color:#1d4ed8 !important',
+                    'font-weight:700 !important',
+                    'font-size:12px !important',
+                    'padding:7px 14px !important',
+                    'border-radius:8px !important',
+                    'box-shadow:0 2px 8px rgba(29, 78, 216, 0.08) !important',
+                    'cursor:pointer !important',
+                    'vertical-align:middle !important',
+                    'transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important'
+                ].join(';');
+                aiBtn.innerHTML = '<span style="font-size:14px">🤖</span> <span>Pre-Screening</span>';
+                aiBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    var activeSid = getActiveReviewerModalSubmissionId() || sid || currentSubmissionId || '1';
+                    window.__sfOpenInScreenReader(activeSid, 'prescreen');
+                };
+                actionsWrap.appendChild(aiBtn);
+            }
+
             if (targetContainer) {
                 targetContainer.appendChild(actionsWrap);
             } else if (reviewerTabs && reviewerTabs.parentNode) {
@@ -406,6 +416,16 @@
 
     // ── Inject Direct Action Buttons (Markups, Pre-Screen) Per Paper Row ───
     function injectPaperRowActions() {
+        var isAuthorDashboard = window.location.href.indexOf('/dashboard/mySubmissions') !== -1;
+        var isReviewerDashboard = window.location.href.indexOf('/dashboard/reviewAssignments') !== -1;
+        var isEditorDashboard = window.location.href.indexOf('/dashboard/editorial') !== -1;
+
+        // Strict role gating:
+        // 1. Author Dashboard: DO NOT inject any AI Pre-Screen or raw Markups buttons. Authors only see native OJS actions (e.g. View).
+        if (isAuthorDashboard) {
+            return;
+        }
+
         var rows = document.querySelectorAll('table tbody tr, .pkpTable tbody tr, .app__page table tbody tr');
         if (!rows || rows.length === 0) return;
 
@@ -440,7 +460,7 @@
             wrap.className = 'sf-row-actions';
             wrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;';
 
-            // 1. Markups Button (opens Document & Markups for this specific paper)
+            // 1. Markups Button (opens Document & Markups for this specific paper - Reviewers & Editors)
             var markupsBtn = document.createElement('button');
             markupsBtn.type = 'button';
             markupsBtn.className = 'sf-row-btn sf-row-btn-markup';
@@ -466,36 +486,38 @@
                 e.stopPropagation();
                 window.__sfOpenInScreenReader(sid, 'viewer');
             };
-
-            // 2. Pre-Screen Button (evaluates this specific paper)
-            var prescreenBtn = document.createElement('button');
-            prescreenBtn.type = 'button';
-            prescreenBtn.className = 'sf-row-btn sf-row-btn-prescreen';
-            prescreenBtn.style.cssText = [
-                'display:inline-flex !important',
-                'align-items:center !important',
-                'gap:4px !important',
-                'background:#ffffff !important',
-                'color:#334155 !important',
-                'border:1px solid #cbd5e1 !important',
-                'border-radius:6px !important',
-                'padding:6px 11px !important',
-                'font-size:12px !important',
-                'font-weight:600 !important',
-                'cursor:pointer !important',
-                'line-height:1.2 !important',
-                'transition:all 0.15s ease !important'
-            ].join(';');
-            prescreenBtn.innerHTML = '<span>📋</span><span>Pre-Screen</span>';
-            prescreenBtn.title = 'Open Manuscript Pre-Screening Evaluation for Submission #' + sid;
-            prescreenBtn.onclick = function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.__sfOpenInScreenReader(sid, 'prescreen');
-            };
-
             wrap.appendChild(markupsBtn);
-            wrap.appendChild(prescreenBtn);
+
+            // 2. Pre-Screen Button (evaluates this specific paper - Editors ONLY, NEVER for Reviewer or Author)
+            if (!isReviewerDashboard) {
+                var prescreenBtn = document.createElement('button');
+                prescreenBtn.type = 'button';
+                prescreenBtn.className = 'sf-row-btn sf-row-btn-prescreen';
+                prescreenBtn.style.cssText = [
+                    'display:inline-flex !important',
+                    'align-items:center !important',
+                    'gap:4px !important',
+                    'background:#ffffff !important',
+                    'color:#334155 !important',
+                    'border:1px solid #cbd5e1 !important',
+                    'border-radius:6px !important',
+                    'padding:6px 11px !important',
+                    'font-size:12px !important',
+                    'font-weight:600 !important',
+                    'cursor:pointer !important',
+                    'line-height:1.2 !important',
+                    'transition:all 0.15s ease !important'
+                ].join(';');
+                prescreenBtn.innerHTML = '<span>📋</span><span>Pre-Screen</span>';
+                prescreenBtn.title = 'Open Manuscript Pre-Screening Evaluation for Submission #' + sid;
+                prescreenBtn.onclick = function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.__sfOpenInScreenReader(sid, 'prescreen');
+                };
+                wrap.appendChild(prescreenBtn);
+            }
+
             actionsCell.appendChild(wrap);
         });
     }

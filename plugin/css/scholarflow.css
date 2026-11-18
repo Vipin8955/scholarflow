@@ -621,7 +621,7 @@ top-nav-actions div:first-child:has(a[target="_blank"]),
     margin: 0 !important;
     box-sizing: border-box !important;
     position: sticky !important;
-    top: 56px !important;
+    top: 0 !important;
     z-index: 9999 !important;
     overflow: visible !important;
 }
@@ -2279,8 +2279,7 @@ button.DialogClose svg,
 
 /* 2. Top Header Fixed Executive Elevation */
 .app__header {
-    position: sticky !important;
-    top: 0 !important;
+    position: relative !important;
     z-index: 999999 !important;
 }
 
@@ -2619,3 +2618,9 @@ form button[type="submit"]:not(.DialogClose):hover {
     background: #1e293b !important;
     border-color: #1e293b !important;
 }
+
+/* Ensure HeadlessUI Popover Panels (editorial activity details) are fully visible above tables and never clipped */
+[id^="headlessui-popover-panel"] {
+    z-index: 99999 !important;
+}
+
