@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScholarFlow - Autonomous Scholarly Publishing Platform</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body class="theme-dark">
+
+  <!-- Top Sticky Navigation Bar -->
+  <header class="sf-navbar">
+    <div class="sf-nav-container">
+      <div class="sf-brand" id="nav-brand">
+        <span class="sf-logo-icon">⚡</span>
+        <div class="sf-logo-text">
+          <span class="sf-title">ScholarFlow</span>
+          <span class="sf-badge-platform">PLATFORM</span>
+        </div>
+      </div>
+
+      <nav class="sf-nav-links" id="nav-actions">
+        <!-- Injected dynamically by app.js based on auth state -->
+      </nav>
+    </div>
+  </header>
+
+  <!-- Notification Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Main View Container -->
+  <main class="sf-main">
+
+    <!-- 1. PUBLIC LANDING VIEW (Strictly NO journals or manuscripts visible) -->
+    <section id="view-landing" class="sf-view active">
+      <div class="sf-landing-wrapper">
+        
+        <!-- 3D Book Animation in Center -->
+        <div class="sf-book-stage">
+          <div class="sf-book-ambient-glow"></div>
+          <div class="sf-book-shadow"></div>
+          <div class="sf-book-scene">
+            <div class="sf-book-3d" id="animated-book">
+              <!-- Static Left Page -->
+              <div class="sf-book-half sf-book-left">
+                <div class="sf-page-content">
+                  <div class="sf-text-line w80"></div>
+                  <div class="sf-text-line w90"></div>
+                  <div class="sf-text-line w65"></div>
+                  <div class="sf-text-line w75"></div>
+                  <div class="sf-text-line w85"></div>
+                  <div class="sf-text-line w70"></div>
+                  <div class="sf-text-seal">⚡ ScholarFlow AI</div>
+                </div>
+              </div>
+
+              <!-- Spine & Ribbon -->
+              <div class="sf-book-spine"></div>
+              <div class="sf-book-ribbon"></div>
+
+              <!-- Flipping Pages -->
+              <div class="sf-flip-page sf-flip-1">
+                <div class="sf-page-face sf-page-front">
+                  <div class="sf-text-line w70"></div>
+                  <div class="sf-text-line w85"></div>
+                  <div class="sf-text-line w60"></div>
+                  <div class="sf-text-line w75"></div>
+                </div>
+                <div class="sf-page-face sf-page-back">
+                  <div class="sf-text-line w80"></div>
+                  <div class="sf-text-line w90"></div>
+                  <div class="sf-text-line w75"></div>
+                </div>
+              </div>
+
+              <div class="sf-flip-page sf-flip-2">
+                <div class="sf-page-face sf-page-front">
+                  <div class="sf-text-line w85"></div>
+                  <div class="sf-text-line w60"></div>
+                  <div class="sf-text-line w75"></div>
+                </div>
+                <div class="sf-page-face sf-page-back">
+                  <div class="sf-text-line w90"></div>
+                  <div class="sf-text-line w70"></div>
+                  <div class="sf-text-line w80"></div>
+                </div>
+              </div>
+
+              <div class="sf-flip-page sf-flip-3">
+                <div class="sf-page-face sf-page-front">
+                  <div class="sf-text-line w65"></div>
+                  <div class="sf-text-line w80"></div>
+                  <div class="sf-text-line w70"></div>
+                </div>
+                <div class="sf-page-face sf-page-back">
+                  <div class="sf-text-line w85"></div>
+                  <div class="sf-text-line w60"></div>
+                  <div class="sf-text-line w75"></div>
+                </div>
+              </div>
+
+              <!-- Static Right Page -->
+              <div class="sf-book-half sf-book-right">
+                <div class="sf-page-content">
+                  <div class="sf-text-line w75"></div>
+                  <div class="sf-text-line w85"></div>
+                  <div class="sf-text-line w90"></div>
+                  <div class="sf-text-line w65"></div>
+                  <div class="sf-text-line w80"></div>
+                  <div class="sf-text-line w70"></div>
+                  <div class="sf-page-number">2026 • SF</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center Stage Headline & Action Gate -->
+        <div class="sf-landing-content">
+          <div class="sf-pill-badge">
+            <span class="sf-dot-live"></span>
+            <span>Independent Scholarly Publishing Platform</span>
+          </div>
+
+          <h1 class="sf-hero-title">Next-Generation Autonomous Peer Review &amp; Publishing</h1>
+          <p class="sf-hero-lead">
+            ScholarFlow is a standalone academic publishing platform with AI pre-screening, local LLM reviewer matchmaking, and split-screen document annotation. Completely decoupled from legacy journal systems.
+          </p>
+
+          <div class="sf-gate-card">
+            <div class="sf-gate-header">
+              <span class="sf-lock-icon">🔒</span>
+              <div>
+                <h3>Scholar Authentication Required</h3>
+                <p>Journal archives, active submissions, and editorial workflows require authenticated access.</p>
+              </div>
+            </div>
+
+            <div class="sf-gate-actions">
+              <button class="sf-btn sf-btn-primary" onclick="App.openAuthModal('login')">
+                <span>Sign In to Access Portal</span>
+                <span class="sf-arrow">&rarr;</span>
+              </button>
+              <button class="sf-btn sf-btn-secondary" onclick="App.openAuthModal('register')">
+                <span>Create Scholar Account</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Feature Highlights -->
+          <div class="sf-features-grid">
+            <div class="sf-feat-card">
+              <div class="sf-feat-icon">🤖</div>
+              <h4>AI Pre-Screening</h4>
+              <p>Ollama-powered editorial triage evaluating scope, rigor, novelty, and peer-review readiness.</p>
+            </div>
+            <div class="sf-feat-card">
+              <div class="sf-feat-icon">🎯</div>
+              <h4>LLM Reviewer Matching</h4>
+              <p>Automated semantic matchmaking pairing manuscripts with active reviewers based on verified expertise.</p>
+            </div>
+            <div class="sf-feat-card">
+              <div class="sf-feat-icon">📝</div>
+              <h4>Document Annotation</h4>
+              <p>Split-screen PDF and DOCX reader with paragraph-level highlighting and collaborative editorial comments.</p>
+            </div>
+            <div class="sf-feat-card">
+              <div class="sf-feat-icon">🛡️</div>
+              <h4>Strict Author Isolation</h4>
+              <p>Enterprise RBAC ensuring authors, editors, and reviewers only access their authorized research papers.</p>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 2. AUTHENTICATED DASHBOARDS VIEW -->
+    <section id="view-dashboard" class="sf-view">
+      <div class="sf-dashboard-wrapper">
+        
+        <!-- Dashboard Top Banner -->
+        <div class="sf-dash-banner">
+          <div>
+            <div class="sf-role-badge-row">
+              <span id="dash-user-role-badge" class="sf-role-pill">AUTHOR</span>
+              <span class="sf-dash-status-dot"></span>
+              <span id="dash-status-text" class="sf-dash-status-text">Connected to Core Publishing Engine</span>
+            </div>
+            <h2 id="dash-welcome-text" class="sf-dash-welcome">Welcome, Scholar</h2>
+            <p id="dash-role-description" class="sf-dash-desc">Manage your research submissions and track peer review status.</p>
+          </div>
+
+          <div class="sf-dash-top-actions" id="dash-primary-actions">
+            <!-- Injected dynamically based on role -->
+          </div>
+        </div>
+
+        <!-- Role-Specific Views Container -->
+        <div id="dash-role-content" class="sf-dash-content">
+          <!-- Dynamically populated for Super Admin, Editor, Author, Reviewer -->
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 3. SPLIT-SCREEN DOCUMENT READER WORKSPACE -->
+    <section id="view-reader" class="sf-view">
+      <div class="sf-reader-wrapper">
+        
+        <!-- Reader Toolbar -->
+        <div class="sf-reader-toolbar">
+          <div class="sf-reader-tool-left">
+            <button class="sf-btn-tool" onclick="App.closeReader()">
+              <span>&larr; Back to Dashboard</span>
+            </button>
+            <div class="sf-reader-title-box">
+              <span class="sf-reader-id" id="reader-paper-id">#1</span>
+              <span class="sf-reader-title" id="reader-paper-title">Manuscript Title</span>
+            </div>
+          </div>
+
+          <div class="sf-reader-tool-center">
+            <div class="sf-color-palette" id="color-palette">
+              <span class="palette-label">Highlight:</span>
+              <button class="color-btn active" data-color="yellow" style="background:#fef08a;" title="Yellow"></button>
+              <button class="color-btn" data-color="green" style="background:#bbf7d0;" title="Green"></button>
+              <button class="color-btn" data-color="blue" style="background:#bfdbfe;" title="Blue"></button>
+              <button class="color-btn" data-color="pink" style="background:#fbcfe8;" title="Pink"></button>
+            </div>
+          </div>
+
+          <div class="sf-reader-tool-right">
+            <button class="sf-btn sf-btn-sm sf-btn-secondary" onclick="App.triggerAiScreeningFromReader()">
+              <span>🤖 Run AI Pre-Screen</span>
+            </button>
+            <button class="sf-btn sf-btn-sm sf-btn-primary" onclick="App.exportAnnotations()">
+              <span>Export Comments</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Reader Main Split Layout -->
+        <div class="sf-reader-split">
+          <!-- Left Pane: Document Content with Paragraph Tags -->
+          <div class="sf-reader-document-pane" id="reader-doc-container">
+            <div class="sf-doc-page" id="doc-content-body">
+              <div class="sf-loading-state">
+                <div class="sf-spinner"></div>
+                <p>Rendering manuscript paragraphs with paragraph IDs...</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Pane: Drawer Tabs (Annotations, AI Screening, Review Form) -->
+          <div class="sf-reader-sidebar">
+            <div class="sf-sidebar-tabs">
+              <button class="tab-btn active" onclick="App.switchReaderTab('annotations')">
+                <span>Annotations (<span id="annots-count">0</span>)</span>
+              </button>
+              <button class="tab-btn" onclick="App.switchReaderTab('screening')">
+                <span>AI Pre-Screen</span>
+              </button>
+              <button class="tab-btn" id="tab-review-btn" onclick="App.switchReaderTab('review')">
+                <span>Peer Review</span>
+              </button>
+            </div>
+
+            <!-- Tab 1: Annotations List & Add Form -->
+            <div id="tab-annotations" class="sf-sidebar-tab-content active">
+              <div class="sf-add-annot-box">
+                <label>Add Comment on Selection:</label>
+                <div id="selected-text-preview" class="selected-text-preview">Select any text in the document on the left...</div>
+                <textarea id="comment-input" placeholder="Type your editorial critique or note..." rows="2"></textarea>
+                <div class="sf-annot-form-footer">
+                  <label class="confidential-check">
+                    <input type="checkbox" id="confidential-check">
+                    <span>Confidential to Editor</span>
+                  </label>
+                  <button class="sf-btn sf-btn-sm sf-btn-primary" onclick="App.saveAnnotation()">Add Note</button>
+                </div>
+              </div>
+
+              <div class="sf-annots-list" id="annots-list-container">
+                <!-- Rendered annotations cards -->
+              </div>
+            </div>
+
+            <!-- Tab 2: AI Pre-Screening Report -->
+            <div id="tab-screening" class="sf-sidebar-tab-content">
+              <div id="reader-screening-content">
+                <div class="sf-empty-note">
+                  <p>No screening report loaded. Click "Run AI Pre-Screen" in the toolbar to evaluate with Ollama.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: Peer Review Submission Form -->
+            <div id="tab-review" class="sf-sidebar-tab-content">
+              <div class="sf-review-form-panel">
+                <h4>Peer Review Evaluation</h4>
+                <div class="form-group">
+                  <label>Overall Score (1 - 10):</label>
+                  <input type="number" id="review-score" min="1" max="10" value="8" class="sf-input">
+                </div>
+                <div class="form-group">
+                  <label>Editorial Recommendation:</label>
+                  <select id="review-rec" class="sf-input">
+                    <option value="accept">Accept Submission</option>
+                    <option value="revisions">Revisions Required</option>
+                    <option value="resubmit">Resubmit for Review</option>
+                    <option value="decline">Decline Submission</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Comments for Authors:</label>
+                  <textarea id="review-author-comments" rows="4" class="sf-input" placeholder="Detailed feedback, methodology strengths, and constructive revision guidance..."></textarea>
+                </div>
+                <div class="form-group">
+                  <label>Confidential Notes for Editor:</label>
+                  <textarea id="review-editor-comments" rows="2" class="sf-input" placeholder="Private assessment for the editorial board..."></textarea>
+                </div>
+                <button class="sf-btn sf-btn-primary sf-w-full" onclick="App.submitPeerReview()">Submit Review</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- 1. Authentication Modal -->
+  <div id="modal-auth" class="sf-modal-overlay">
+    <div class="sf-modal-card sf-modal-auth">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      
+      <div class="modal-auth-tabs">
+        <button id="tab-login-btn" class="auth-tab-btn active" onclick="App.switchAuthTab('login')">Sign In</button>
+        <button id="tab-register-btn" class="auth-tab-btn" onclick="App.switchAuthTab('register')">Create Account</button>
+      </div>
+
+      <!-- Quick Role Switcher for Fast Evaluation -->
+      <div class="sf-quick-switcher">
+        <span class="qs-label">Quick Demo Logins:</span>
+        <div class="qs-buttons">
+          <button type="button" class="qs-btn" onclick="App.prefillLogin('admin', 'password123')">Admin</button>
+          <button type="button" class="qs-btn" onclick="App.prefillLogin('editor', 'password123')">Editor</button>
+          <button type="button" class="qs-btn" onclick="App.prefillLogin('author', 'password123')">Author</button>
+          <button type="button" class="qs-btn" onclick="App.prefillLogin('reviewer', 'password123')">Reviewer</button>
+        </div>
+      </div>
+
+      <!-- Login Form -->
+      <form id="form-login" onsubmit="App.handleLogin(event)" class="auth-form active">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="login-username" class="sf-input" required placeholder="e.g. admin or editor">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" class="sf-input" required placeholder="password123">
+        </div>
+        <button type="submit" class="sf-btn sf-btn-primary sf-w-full sf-btn-lg">
+          <span>Authenticate &amp; Launch</span>
+          <span>&rarr;</span>
+        </button>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-register" onsubmit="App.handleRegister(event)" class="auth-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="reg-username" class="sf-input" required placeholder="scholar_jane">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="reg-email" class="sf-input" required placeholder="jane@university.edu">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="reg-password" class="sf-input" required placeholder="••••••••">
+          </div>
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="reg-fullname" class="sf-input" required placeholder="Dr. Jane Doe">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Affiliation / Institution</label>
+            <input type="text" id="reg-affiliation" class="sf-input" placeholder="MIT, Dept of Computer Science">
+          </div>
+          <div class="form-group">
+            <label>Primary Role</label>
+            <select id="reg-role" class="sf-input">
+              <option value="author">Author (Submit Papers)</option>
+              <option value="reviewer">Reviewer (Peer Review)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Research Interests / Expertise (comma-separated)</label>
+          <input type="text" id="reg-interests" class="sf-input" placeholder="Artificial Intelligence, Cryptography, Genomics">
+        </div>
+        <button type="submit" class="sf-btn sf-btn-primary sf-w-full sf-btn-lg">
+          <span>Register Scholar Account</span>
+          <span>&rarr;</span>
+        </button>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- 2. Author Manuscript Submission Wizard Modal -->
+  <div id="modal-submission" class="sf-modal-overlay">
+    <div class="sf-modal-card sf-modal-wide">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      <div class="modal-header">
+        <span class="sf-modal-pill">⚡ Step-by-Step Submission</span>
+        <h2>Submit Research Manuscript</h2>
+        <p>Complete all sections to submit your manuscript for peer review triage.</p>
+      </div>
+
+      <form id="form-submit-manuscript" onsubmit="App.handleSubmitManuscript(event)">
+        <div class="form-group">
+          <label>Target Academic Journal *</label>
+          <select id="sub-journal" class="sf-input" required>
+            <!-- Populated from GET /api/v2/journals -->
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Manuscript Title *</label>
+          <input type="text" id="sub-title" class="sf-input" required placeholder="Full scholarly title of your paper">
+        </div>
+
+        <div class="form-group">
+          <label>Abstract *</label>
+          <textarea id="sub-abstract" class="sf-input" rows="4" required placeholder="Complete abstract summarizing background, methodology, experimental findings, and conclusions..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Keywords (comma-separated)</label>
+          <input type="text" id="sub-keywords" class="sf-input" placeholder="e.g. Machine Learning, Distributed Systems, Cryptography">
+        </div>
+
+        <div class="form-group">
+          <label>Upload Manuscript File (PDF or DOCX) *</label>
+          <div class="sf-file-dropzone">
+            <input type="file" id="sub-file" accept=".pdf,.docx" required>
+            <div class="dropzone-hint">
+              <span>📄 Drag &amp; Drop or Browse PDF / DOCX</span>
+              <small>Max file size: 50MB. Converted automatically to semantic review format.</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="sf-btn sf-btn-secondary" onclick="App.closeModals()">Cancel</button>
+          <button type="submit" class="sf-btn sf-btn-primary sf-btn-lg">
+            <span>Submit Manuscript &rarr;</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- 3. AI Pre-Screening Modal -->
+  <div id="modal-ai-screen" class="sf-modal-overlay">
+    <div class="sf-modal-card sf-modal-wide">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      <div class="modal-header">
+        <div class="sf-header-badge-row">
+          <span class="sf-modal-pill">🤖 Local LLM Intelligence</span>
+          <span id="screen-status-pill" class="sf-score-pill">PROCEED TO PEER REVIEW</span>
+        </div>
+        <h2 id="screen-title">AI Editorial Pre-Screening Report</h2>
+        <p id="screen-paper-title" class="sf-modal-sub">Manuscript: Quantum Computing</p>
+      </div>
+
+      <div class="sf-modal-body" id="screen-report-body">
+        <div class="sf-loading-state">
+          <div class="sf-spinner"></div>
+          <p>Ollama (Qwen 2.5) is evaluating scope, methodological rigor, and academic novelty...</p>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="sf-btn sf-btn-secondary" onclick="App.closeModals()">Close</button>
+        <button class="sf-btn sf-btn-primary" id="btn-screen-match-reviewers">
+          <span>Find Reviewers With AI &rarr;</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. AI Reviewer Matchmaking Modal -->
+  <div id="modal-ai-match" class="sf-modal-overlay">
+    <div class="sf-modal-card sf-modal-wide">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      <div class="modal-header">
+        <span class="sf-modal-pill">🎯 100% Ollama Reviewer Matchmaker</span>
+        <h2>AI-Recommended Peer Reviewers</h2>
+        <p id="match-paper-title" class="sf-modal-sub">Candidate reviewers evaluated against manuscript abstract</p>
+      </div>
+
+      <div class="sf-modal-body" id="match-reviewers-body">
+        <div class="sf-loading-state">
+          <div class="sf-spinner"></div>
+          <p>Matching candidate reviewers using Ollama batch evaluator...</p>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="sf-btn sf-btn-secondary" onclick="App.closeModals()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Editorial Decision Modal -->
+  <div id="modal-decision" class="sf-modal-overlay">
+    <div class="sf-modal-card">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      <div class="modal-header">
+        <span class="sf-modal-pill">⚖️ Editorial Authority</span>
+        <h2>Record Editorial Decision</h2>
+        <p id="decision-paper-title" class="sf-modal-sub">Manuscript #1</p>
+      </div>
+
+      <form id="form-record-decision" onsubmit="App.handleRecordDecision(event)">
+        <div class="form-group">
+          <label>Formal Editorial Decision *</label>
+          <select id="dec-decision" class="sf-input" required>
+            <option value="accept">Accept Submission (Publish)</option>
+            <option value="revisions_requested">Request Revisions</option>
+            <option value="rejected">Decline / Desk Reject</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Official Decision Letter to Authors *</label>
+          <textarea id="dec-comments" class="sf-input" rows="6" required placeholder="Dear Author,\n\nWe have completed the editorial review of your manuscript..."></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="sf-btn sf-btn-secondary" onclick="App.closeModals()">Cancel</button>
+          <button type="submit" class="sf-btn sf-btn-primary">
+            <span>Confirm &amp; Record Decision</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- 6. Create Journal Modal (Super Admin) -->
+  <div id="modal-journal" class="sf-modal-overlay">
+    <div class="sf-modal-card">
+      <button class="modal-close-btn" onclick="App.closeModals()">&times;</button>
+      <div class="modal-header">
+        <span class="sf-modal-pill">🏛️ Platform Administration</span>
+        <h2>Create Hosted Academic Journal</h2>
+        <p>Establish a new peer-reviewed scholarly journal on the platform.</p>
+      </div>
+
+      <form id="form-create-journal" onsubmit="App.handleCreateJournal(event)">
+        <div class="form-group">
+          <label>Journal Title *</label>
+          <input type="text" id="j-title" class="sf-input" required placeholder="Journal of Advanced Autonomous Systems">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>URL Path / Slug *</label>
+            <input type="text" id="j-path" class="sf-input" required placeholder="jaas">
+          </div>
+          <div class="form-group">
+            <label>Acronym *</label>
+            <input type="text" id="j-acronym" class="sf-input" required placeholder="JAAS">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>ISSN (Online / Print)</label>
+          <input type="text" id="j-issn" class="sf-input" placeholder="2049-3614">
+        </div>
+        <div class="form-group">
+          <label>Scope &amp; Description</label>
+          <textarea id="j-desc" class="sf-input" rows="3" placeholder="Peer-reviewed scholarly journal dedicated to advances in..."></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="sf-btn sf-btn-secondary" onclick="App.closeModals()">Cancel</button>
+          <button type="submit" class="sf-btn sf-btn-primary">
+            <span>Establish Journal &rarr;</span>
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- Application Script -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
