@@ -55,7 +55,8 @@
 		</div>
 	</header>
 
-	{* 2. PRIMARY CONTENT: Research Publications & Manuscripts in THIS Journal *}
+	{* 2. PRIMARY CONTENT: Research Publications & Manuscripts in THIS Journal (Auth-Gated) *}
+	{if $currentUser}
 	<section class="sf_journal_section sf_submissions_section" style="margin-top:20px;padding-top:10px;border-top:none;">
 		<div class="sf_section_header" style="margin-bottom:18px;">
 			<div>
@@ -148,6 +149,24 @@
 			</div>
 		{/if}
 	</section>
+	{else}
+		{* Unauthenticated Gate for Manuscripts *}
+		<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:36px 32px;text-align:center;margin-top:24px;box-shadow:0 4px 20px -2px rgba(15,23,42,0.03);">
+			<div style="width:48px;height:48px;border-radius:12px;background:#eef2ff;color:#4f46e5;display:inline-flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:14px;border:1px solid #e0e7ff;">🔒</div>
+			<h3 style="font-size:18px;font-weight:700;color:#0f172a;margin:0 0 8px 0;">Scholar Authentication Required</h3>
+			<p style="font-size:14px;color:#64748b;margin:0 auto 20px auto;max-width:540px;line-height:1.6;">
+				Research manuscripts, peer-review evaluations, and submissions for <strong>{$currentJournal->getLocalizedName()|escape}</strong> are accessible to authenticated researchers and editorial members.
+			</p>
+			<div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+				<a href="{url page="login"}" style="display:inline-flex;align-items:center;gap:6px;background:#0f172a;color:#ffffff;padding:10px 20px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;">
+					<span>Sign In to Access Manuscripts</span> <span>&rarr;</span>
+				</a>
+				<a href="{url page="user" op="register"}" style="display:inline-flex;align-items:center;gap:6px;background:#ffffff;color:#1e293b;border:1px solid #cbd5e1;padding:10px 18px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;">
+					<span>Create Account</span>
+				</a>
+			</div>
+		</div>
+	{/if}
 
 	{* 3. Optional Homepage Image *}
 	{if $homepageImage}
@@ -190,7 +209,8 @@
 		</section>
 	{/if}
 
-	{* 7. NETWORK EXPLORATION: Explore Other Journals on ScholarFlow *}
+	{* 7. NETWORK EXPLORATION: Explore Other Journals on ScholarFlow (Only when authenticated) *}
+	{if $currentUser}
 	<section class="sf_explore_journals_section" style="margin-top:48px;padding-top:32px;border-top:1px solid #e2e8f0;">
 		<div class="sf_explore_header">
 			<div class="sf_explore_badge">
@@ -258,6 +278,7 @@
 			</div>
 		{/if}
 	</section>
+	{/if}
 
 </div><!-- .page_index_journal -->
 
