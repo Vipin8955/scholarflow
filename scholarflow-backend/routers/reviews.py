@@ -17,17 +17,21 @@ class AssignReviewerRequest(BaseModel):
     due_days: Optional[int] = 21
 
 class RespondInvitationRequest(BaseModel):
-    accept: bool
+    accept: Optional[bool] = None
+    decision: Optional[str] = None # accepted or declined
 
 class SubmitReviewRequest(BaseModel):
+    score: Optional[int] = 8
     recommendation: str # accept, minor_revisions, major_revisions, reject
     comments_for_author: str
     confidential_comments_for_editor: Optional[str] = None
+    confidential_comments: Optional[str] = None
 
 class EditorialDecisionRequest(BaseModel):
     manuscript_id: int
     decision: str # accept, request_revisions, decline
     decision_letter: Optional[str] = None
+    comments: Optional[str] = None
 
 @router.get("/candidates")
 def list_reviewer_candidates(
@@ -127,9 +131,11 @@ def get_my_review_assignments(
     
     return [
         {
+            "id": a.id,
             "assignment_id": a.id,
             "manuscript_id": a.manuscript_id,
             "manuscript_title": a.manuscript.title if a.manuscript else None,
+            "journal_title": a.manuscript.journal.title if (a.manuscript and a.manuscript.journal) else "General",
             "status": a.status,
             "invited_at": a.invited_at.isoformat() if a.invited_at else None,
             "responded_at": a.responded_at.isoformat() if a.responded_at else None,
@@ -154,14 +160,15 @@ def respond_to_invitation(
     if assignment.reviewer_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your assignment")
         
+    is_accepted = data.accept if data.accept is not None else (data.decision == "accepted")
     assignment.responded_at = datetime.now(timezone.utc)
-    assignment.status = "accepted" if data.accept else "declined"
+    assignment.status = "accepted" if is_accepted else "declined"
     db.commit()
     
     return {
         "assignment_id": assignment.id,
         "status": assignment.status,
-        "message": "Invitation accepted" if data.accept else "Invitation declined"
+        "message": "Invitation accepted" if is_accepted else "Invitation declined"
     }
 
 @router.post("/{assignment_id}/submit")
@@ -181,11 +188,12 @@ def submit_review(
     if assignment.review:
         raise HTTPException(status_code=400, detail="Review already submitted for this assignment")
         
+    conf_comments = data.confidential_comments_for_editor or data.confidential_comments
     review = Review(
         assignment_id=assignment.id,
         recommendation=data.recommendation,
         comments_for_author=data.comments_for_author,
-        confidential_comments_for_editor=data.confidential_comments_for_editor,
+        confidential_comments_for_editor=conf_comments,
         submitted_at=datetime.now(timezone.utc)
     )
     db.add(review)
@@ -209,11 +217,12 @@ def record_editorial_decision(
     if not manuscript:
         raise HTTPException(status_code=404, detail="Manuscript not found")
         
+    final_letter = data.decision_letter or data.comments
     decision = EditorialDecision(
         manuscript_id=data.manuscript_id,
         editor_id=current_user.id,
         decision=data.decision,
-        decision_letter=data.decision_letter,
+        decision_letter=final_letter,
         decided_at=datetime.now(timezone.utc)
     )
     db.add(decision)
@@ -230,5 +239,6 @@ def record_editorial_decision(
     return {
         "message": f"Editorial decision recorded: {data.decision}",
         "manuscript_id": manuscript.id,
+        "status": manuscript.status,
         "new_status": manuscript.status
     }
