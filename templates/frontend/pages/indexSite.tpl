@@ -527,12 +527,18 @@
 				Select a hosted journal below to access editorial workflows, manage active manuscript submissions, or participate in double-blind peer review.
 			</p>
 
+			{assign var=siteJournals value=$allJournals|default:$journals}
+			{assign var=firstJournalPath value="test"}
+			{if $siteJournals && count($siteJournals)}
+				{assign var=firstJournalPath value=$siteJournals[0]->getPath()}
+			{/if}
+
 			<div style="display:flex;gap:10px;flex-wrap:wrap;">
-				<a href="{url page="dashboard"}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
+				<a href="{if $currentContext}{url page="dashboard"}{else}{url journal=$firstJournalPath page="dashboard"}{/if}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
 					<span>Go to Editorial Dashboard &rarr;</span>
 				</a>
 				{if $isSiteAdmin}
-					<a href="{url page="admin"}" class="sf_btn_secondary" style="padding:10px 18px;font-size:13px;">
+					<a href="{url context="index" page="admin"}" class="sf_btn_secondary" style="padding:10px 18px;font-size:13px;">
 						<span>ScholarFlow Platform Console &rarr;</span>
 					</a>
 				{/if}
@@ -540,7 +546,6 @@
 		</div>
 
 		{* Hosted Journals Grid for Authenticated Users *}
-		{assign var=siteJournals value=$allJournals|default:$journals}
 		{if $siteJournals && count($siteJournals)}
 			<div style="margin-bottom:24px;">
 				<h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 6px 0;">Hosted Scholarly Journals</h2>

@@ -95,9 +95,20 @@
 			{* Right: Clearly Visible User Actions (Login, Register, Dashboard, Profile, Logout) *}
 			<div class="sf_header_right" style="display:flex;align-items:center;gap:10px;">
 				{if $currentUser}
-					<a href="{url page="dashboard"}" style="display:inline-flex;align-items:center;gap:6px;background:#1e293b;border:1px solid #334155;color:#f8fafc;padding:7px 15px;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;transition:all 0.15s ease;">
+					{assign var=headerJournalPath value="test"}
+					{if $currentContext}
+						{assign var=headerJournalPath value=$currentContext->getPath()}
+					{elseif $allJournals && count($allJournals)}
+						{assign var=headerJournalPath value=$allJournals[0]->getPath()}
+					{/if}
+					<a href="{url journal=$headerJournalPath page="dashboard"}" style="display:inline-flex;align-items:center;gap:6px;background:#1e293b;border:1px solid #334155;color:#f8fafc;padding:7px 15px;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;transition:all 0.15s ease;">
 						<span>📊</span> <span>Dashboard</span>
 					</a>
+					{if $isSiteAdmin}
+						<a href="{url context="index" page="admin"}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#f8fafc;padding:7px 12px;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;transition:all 0.15s ease;" title="Platform Administration">
+							<span>⚙️</span> <span>Administration</span>
+						</a>
+					{/if}
 					<a href="{url page="user" op="profile"}" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);color:#cbd5e1;padding:7px 12px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;transition:all 0.15s ease;">
 						<span>👤</span> <span>{$currentUser->getUsername()|escape}</span>
 					</a>
