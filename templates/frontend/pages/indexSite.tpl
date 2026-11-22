@@ -531,7 +531,7 @@
 				<a href="{url page="dashboard"}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
 					<span>Go to Editorial Dashboard &rarr;</span>
 				</a>
-				{if in_array(\PKP\security\Role::ROLE_ID_SITE_ADMIN, (array)$currentUser->getRoles())}
+				{if $isSiteAdmin}
 					<a href="{url page="admin"}" class="sf_btn_secondary" style="padding:10px 18px;font-size:13px;">
 						<span>ScholarFlow Platform Console &rarr;</span>
 					</a>
@@ -540,13 +540,14 @@
 		</div>
 
 		{* Hosted Journals Grid for Authenticated Users *}
-		{if $allJournals && count($allJournals)}
+		{assign var=siteJournals value=$allJournals|default:$journals}
+		{if $siteJournals && count($siteJournals)}
 			<div style="margin-bottom:24px;">
 				<h2 style="font-size:20px;font-weight:800;color:#0f172a;margin:0 0 6px 0;">Hosted Scholarly Journals</h2>
 				<p style="font-size:13.5px;color:#64748b;margin:0 0 20px 0;">Academic journals hosted on your ScholarFlow platform.</p>
 
 				<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:20px;">
-					{foreach from=$allJournals item=j}
+					{foreach from=$siteJournals item=j}
 						<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 1px 3px rgba(0,0,0,0.02);transition:all 0.15s ease;" onmouseenter="this.style.borderColor='#cbd5e1';this.style.transform='translateY(-2px)'" onmouseleave="this.style.borderColor='#e2e8f0';this.style.transform='none'">
 							<div>
 								<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">

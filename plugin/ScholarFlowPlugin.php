@@ -168,6 +168,11 @@ class ScholarFlowPlugin extends GenericPlugin
         $requestedPage = ($router && method_exists($router, 'getRequestedPage')) ? (string) $router->getRequestedPage($request) : '';
         $requestedOp = ($router && method_exists($router, 'getRequestedOp')) ? (string) $router->getRequestedOp($request) : '';
 
+        // Assign site admin status globally for templates
+        try {
+            $templateManager->assign('isSiteAdmin', \PKP\security\Validation::isSiteAdmin());
+        } catch (\Throwable $e) {}
+
         // Assign platform stats and journals when accessing admin console
         if ($requestedPage === 'admin') {
             try {
