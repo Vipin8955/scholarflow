@@ -3860,4 +3860,49 @@ body {
     }
 }
 
+/* ── ScholarFlow Submission Wizard Helper & Polish ── */
+.tox.tox-tinymce {
+    visibility: visible !important;
+    min-height: 80px !important;
+    border-radius: 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.tox.tox-tinymce:focus-within {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15) !important;
+}
+.sf_field_highlight_error {
+    border: 1px solid #ef4444 !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25) !important;
+    border-radius: 8px !important;
+    animation: sfShake 0.4s ease-in-out !important;
+}
+@keyframes sfShake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-4px); }
+    40%, 80% { transform: translateX(4px); }
+}
+.sf_submission_toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #0f172a;
+    color: #ffffff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+    font-size: 13.5px;
+    font-weight: 600;
+    z-index: 9999999;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: sfFadeInUp 0.3s ease;
+}
+@keyframes sfFadeInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 

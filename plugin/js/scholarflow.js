@@ -225,6 +225,7 @@
         injectNativeReviewerMatchmaking();
         simplifyOjsUi();
         rebrandUiToScholarFlow();
+        initSubmissionPageHelper();
         setInterval(function () {
             ensureButton();
             injectNativeOJSButtons();
@@ -233,6 +234,7 @@
             injectNativeReviewerMatchmaking();
             simplifyOjsUi();
             rebrandUiToScholarFlow();
+            initSubmissionPageHelper();
         }, 600);
 
         if (window.MutationObserver && !window.__sfObserverInitialized) {
@@ -5132,6 +5134,118 @@ function injectNativeReviewerMatchmaking(force) {
         } catch (err) {
             // Safe fail
         }
+    }
+
+    // ── ScholarFlow Submission Wizard Helper & Validation Polish ───────────
+    var _sfSubHelperInitialized = false;
+    function initSubmissionPageHelper() {
+        if (!window.location.pathname.includes('/submission')) return;
+
+        // Auto-fix TinyMCE visibility
+        var tox = document.querySelector('.tox-tinymce');
+        if (tox && tox.style.visibility === 'hidden') {
+            tox.style.visibility = 'visible';
+        }
+
+        if (_sfSubHelperInitialized) return;
+        _sfSubHelperInitialized = true;
+
+        document.addEventListener('click', function (e) {
+            var btn = e.target.closest('button');
+            if (!btn || !btn.textContent || !btn.textContent.includes('Begin Submission')) return;
+
+            var form = document.querySelector('.startSubmissionPage__form, .pkpForm');
+            if (!form) return;
+
+            // Check TinyMCE editor
+            var ed = typeof tinymce !== 'undefined' ? tinymce.get('startSubmission-title-control') : null;
+            var title = '';
+            if (ed) {
+                title = ed.getContent({ format: 'text' }).trim();
+                ed.save();
+                ed.fire('change');
+                ed.fire('input');
+            } else {
+                var ta = document.getElementById('startSubmission-title-control');
+                if (ta) title = ta.value.trim();
+            }
+
+            var reqCb = document.querySelector('input[name="submissionRequirements"]');
+            var privCb = document.querySelector('input[name="privacyConsent"]');
+
+            if (!title) {
+                e.preventDefault();
+                e.stopPropagation();
+                var toxEl = document.querySelector('.tox-tinymce');
+                if (toxEl) {
+                    toxEl.classList.add('sf_field_highlight_error');
+                    toxEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(function () { toxEl.classList.remove('sf_field_highlight_error'); }, 2500);
+                }
+                showSfToast('⚠️ Please enter a manuscript title before proceeding.');
+                return;
+            }
+
+            if ((reqCb && !reqCb.checked) || (privCb && !privCb.checked)) {
+                e.preventDefault();
+                e.stopPropagation();
+                var targetCb = (reqCb && !reqCb.checked) ? reqCb : privCb;
+                var parentOption = targetCb.closest('.pkpFormField--options__option') || targetCb;
+                parentOption.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                parentOption.classList.add('sf_field_highlight_error');
+                setTimeout(function () { parentOption.classList.remove('sf_field_highlight_error'); }, 2500);
+                showSfToast('⚠️ Please confirm the submission checklist and privacy statement.');
+                return;
+            }
+
+            // All fields valid -> trigger submission smoothly via Vue proxy
+            try {
+                var app = document.getElementById('app');
+                if (app && app.__vue_app__) {
+                    function findFormComp(vnode) {
+                        if (!vnode) return null;
+                        if (vnode.component) {
+                            var c = vnode.component;
+                            if (c.type && (c.type.name === 'StartSubmissionForm' || c.type.name === 'PkpForm')) return c;
+                            if (c.subTree) {
+                                var found = findFormComp(c.subTree);
+                                if (found) return found;
+                            }
+                        }
+                        if (Array.isArray(vnode.children)) {
+                            for (var i = 0; i < vnode.children.length; i++) {
+                                var found = findFormComp(vnode.children[i]);
+                                if (found) return found;
+                            }
+                        }
+                        return null;
+                    }
+                    var formComp = findFormComp(app.__vue_app__._container._vnode);
+                    if (formComp && formComp.proxy) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        btn.disabled = true;
+                        btn.innerHTML = '<span>⚡ Starting Submission...</span>';
+                        showSfToast('⚡ Starting Submission Wizard...');
+                        formComp.proxy.submit();
+                    }
+                }
+            } catch (err) {
+                console.error('[ScholarFlow] Submission trigger error:', err);
+            }
+        }, true);
+    }
+
+    function showSfToast(msg) {
+        var existing = document.querySelector('.sf_submission_toast');
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        var toast = document.createElement('div');
+        toast.className = 'sf_submission_toast';
+        toast.innerHTML = msg;
+        document.body.appendChild(toast);
+        setTimeout(function () {
+            if (toast && toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 3500);
     }
 
 })();

@@ -534,12 +534,19 @@
 			{/if}
 
 			<div style="display:flex;gap:10px;flex-wrap:wrap;">
-				<a href="{if $currentContext}{url page="dashboard"}{else}{url journal=$firstJournalPath page="dashboard"}{/if}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
-					<span>Go to Editorial Dashboard &rarr;</span>
-				</a>
 				{if $isSiteAdmin}
+					<a href="{if $currentContext}{url page="dashboard"}{else}{url journal=$firstJournalPath page="dashboard"}{/if}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
+						<span>Go to Editorial Dashboard &rarr;</span>
+					</a>
 					<a href="{url context="index" page="admin"}" class="sf_btn_secondary" style="padding:10px 18px;font-size:13px;">
 						<span>ScholarFlow Platform Console &rarr;</span>
+					</a>
+				{else}
+					<a href="{url journal=$firstJournalPath page="dashboard" op="mySubmissions"}" class="sf_btn_primary" style="padding:10px 18px;font-size:13px;">
+						<span>Go to My Submissions &rarr;</span>
+					</a>
+					<a href="{url journal=$firstJournalPath page="submission"}" class="sf_btn_secondary" style="padding:10px 18px;font-size:13px;">
+						<span>➕ Start New Submission</span>
 					</a>
 				{/if}
 			</div>
@@ -574,9 +581,15 @@
 								<a href="{url journal=$j->getPath() page="index"}" style="flex:1;text-align:center;background:#ffffff;color:#1e293b;border:1px solid #cbd5e1;padding:8px 12px;font-size:12.5px;font-weight:600;border-radius:7px;text-decoration:none;">
 									View Journal
 								</a>
-								<a href="{url journal=$j->getPath() page="dashboard"}" style="flex:1;text-align:center;background:#0f172a;color:#ffffff;border:1px solid #0f172a;padding:8px 12px;font-size:12.5px;font-weight:600;border-radius:7px;text-decoration:none;">
-									Dashboard
-								</a>
+								{if $isSiteAdmin}
+									<a href="{url journal=$j->getPath() page="dashboard"}" style="flex:1;text-align:center;background:#0f172a;color:#ffffff;border:1px solid #0f172a;padding:8px 12px;font-size:12.5px;font-weight:600;border-radius:7px;text-decoration:none;">
+										Dashboard
+									</a>
+								{else}
+									<a href="{url journal=$j->getPath() page="submission"}" style="flex:1;text-align:center;background:#0f172a;color:#ffffff;border:1px solid #0f172a;padding:8px 12px;font-size:12.5px;font-weight:600;border-radius:7px;text-decoration:none;">
+										Submit Paper
+									</a>
+								{/if}
 							</div>
 						</div>
 					{/foreach}
