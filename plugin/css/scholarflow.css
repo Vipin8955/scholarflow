@@ -3760,15 +3760,47 @@ form button[type="submit"]:not(.DialogClose):hover {
     border-color: #94a3b8 !important;
 }
 
-/* 7. Footer Overhaul */
+/* 7. Footer Overhaul - Guaranteed Sticky Bottom Across All Pages */
+html {
+    height: 100% !important;
+}
+
+body {
+    min-height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    margin: 0 !important;
+}
+
+.pkp_structure_page {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 100vh !important;
+    flex: 1 0 auto !important;
+    width: 100% !important;
+}
+
+.pkp_structure_content,
+.pkp_structure_main,
+.page,
+.page_about,
+.page_login,
+.page_register,
+.page_index_site,
+.page_index_journal,
+.sf_site_landing {
+    flex: 1 0 auto !important;
+}
+
 .pkp_structure_footer_wrapper {
     background: #0f172a !important;
     border-top: 1px solid #1e293b !important;
     padding: 36px 24px !important;
-    margin-top: 60px !important;
+    margin-top: auto !important;
     color: #94a3b8 !important;
     width: 100% !important;
     box-sizing: border-box !important;
+    flex-shrink: 0 !important;
 }
 
 .pkp_structure_footer {

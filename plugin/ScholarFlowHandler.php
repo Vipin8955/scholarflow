@@ -67,7 +67,8 @@ class ScholarFlowHandler extends \APP\handler\Handler
             $roles = [];
         }
 
-        $isEditor = in_array(Role::ROLE_ID_MANAGER, $roles) || in_array(Role::ROLE_ID_SITE_ADMIN, $roles) || in_array(Role::ROLE_ID_SUB_EDITOR, $roles);
+        $isSiteAdmin = \PKP\security\Validation::isSiteAdmin();
+        $isEditor = $isSiteAdmin || in_array(Role::ROLE_ID_MANAGER, $roles) || in_array(Role::ROLE_ID_SITE_ADMIN, $roles) || in_array(Role::ROLE_ID_SUB_EDITOR, $roles);
         $isReviewer = in_array(Role::ROLE_ID_REVIEWER, $roles);
         $isAuthor = in_array(Role::ROLE_ID_AUTHOR, $roles);
         $isAuthorOnly = $isAuthor && !$isEditor && !$isReviewer;
@@ -83,6 +84,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
             'name' => (string) $user->getFullName(),
             'roles' => array_values(array_unique($roles)),
             'displayRole' => $displayRole,
+            'isSiteAdmin' => $isSiteAdmin,
             'isEditor' => $isEditor,
             'isReviewer' => $isReviewer,
             'isAuthor' => $isAuthor,
@@ -99,7 +101,7 @@ class ScholarFlowHandler extends \APP\handler\Handler
         if (!$user || $submissionId <= 0) {
             return false;
         }
-        if (!empty($userInfo['isEditor'])) {
+        if (!empty($userInfo['isEditor']) || !empty($userInfo['isSiteAdmin']) || \PKP\security\Validation::isSiteAdmin()) {
             return true;
         }
         $uid = (int) $user->getId();

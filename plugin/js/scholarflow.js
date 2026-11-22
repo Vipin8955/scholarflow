@@ -21,6 +21,10 @@
     window.__sfSaveAnnotation = saveAnnotation;
     window.__sfDeleteAnnotation = deleteAnnotation;
     window.__sfExportMarkups = exportMarkups;
+    window.__sfOpenAddCommentBox = openAddCommentBox;
+    window.__sfCloseAddCommentBox = closeAddCommentBox;
+    window.__sfSetInlineColor = setInlineColor;
+    window.__sfSubmitInlineComment = submitInlineComment;
     window.__sfSyncReviewToStep3 = syncReviewFromScholarFlowToOjs;
     window.__sfScrollToAnnotation = scrollToAnnotation;
     window.__sfLoadAnnotations = loadAnnotations;
@@ -2574,9 +2578,40 @@ function injectNativeReviewerMatchmaking(force) {
                       '<span id="sfCommentsCountBadge" style="font-size:11px;font-weight:800;background:#0f172a;color:#ffffff;padding:2px 8px;border-radius:12px">0</span>',
                     '</div>',
                     '<div style="display:flex;align-items:center;gap:6px">',
+                      '<button id="sfAddCommentBtn" onclick="window.__sfOpenAddCommentBox()" title="Add an editorial comment or manuscript feedback" style="display:inline-flex;align-items:center;gap:4px;background:#4f46e5;color:#ffffff;border:none;border-radius:6px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s;box-shadow:0 1px 3px rgba(79,70,229,0.3)">+ Add Comment</button>',
                       '<button id="sfSendToAuthorBtn" onclick="__sfOpenSendToAuthorModal()" title="Send reviewer comments separately to author" style="display:none;align-items:center;gap:4px;background:#eef2ff;border:1px solid #c7d2fe;color:#0f172a;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s">✉️ Send to Author</button>',
                       '<button id="sfSyncToOjsStep3SidebarBtn" onclick="__sfSyncReviewToStep3(); __sfClose();" title="Sync all your inline review comments directly into the official Step 3 review form" style="display:none;align-items:center;gap:4px;background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;border-radius:6px;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.15s">📥 Push to Review Form</button>',
                       '<button onclick="__sfToggleCommentsSidebar()" title="Hide comments sidebar" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#64748b;font-size:13px;font-weight:700;transition:all 0.15s" onmouseenter="this.style.background=\'#e2e8f0\';this.style.color=\'#0f172a\'" onmouseleave="this.style.background=\'#f1f5f9\';this.style.color=\'#64748b\'">✕</button>',
+                    '</div>',
+                  '</div>',
+
+                  /* Inline Add Comment Panel */
+                  '<div id="sfAddCommentBox" style="display:none;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.06);flex-shrink:0">',
+                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">',
+                      '<span style="font-size:11px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px">✍️ Add Comment / Markup</span>',
+                      '<button type="button" onclick="window.__sfCloseAddCommentBox()" style="background:none;border:none;color:#94a3b8;font-size:14px;cursor:pointer;padding:0;line-height:1">✕</button>',
+                    '</div>',
+                    '<div id="sfAddCommentTargetNote" style="font-size:11px;color:#64748b;margin-bottom:8px;font-style:italic;background:#ffffff;padding:5px 8px;border-radius:4px;border:1px solid #e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">',
+                      'General Manuscript Comment',
+                    '</div>',
+                    '<textarea id="sfInlineCommentText" placeholder="Write your observation, revision note, or comment here..." style="width:100%;height:64px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;padding:6px 8px;box-sizing:border-box;resize:vertical;font-family:inherit;color:#1e293b;outline:none"></textarea>',
+                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">',
+                      '<div style="display:flex;align-items:center;gap:4px">',
+                        '<span style="font-size:11px;font-weight:600;color:#64748b">Tag:</span>',
+                        '<button type="button" onclick="window.__sfSetInlineColor(\'yellow\')" id="sfColorBtn-yellow" style="width:18px;height:18px;border-radius:4px;background:#fef08a;border:2px solid #0f172a;cursor:pointer" title="Remark / Yellow"></button>',
+                        '<button type="button" onclick="window.__sfSetInlineColor(\'green\')" id="sfColorBtn-green" style="width:18px;height:18px;border-radius:4px;background:#bbf7d0;border:1px solid #cbd5e1;cursor:pointer" title="Positive / Green"></button>',
+                        '<button type="button" onclick="window.__sfSetInlineColor(\'blue\')" id="sfColorBtn-blue" style="width:18px;height:18px;border-radius:4px;background:#bfdbfe;border:1px solid #cbd5e1;cursor:pointer" title="Clarification / Blue"></button>',
+                        '<button type="button" onclick="window.__sfSetInlineColor(\'pink\')" id="sfColorBtn-pink" style="width:18px;height:18px;border-radius:4px;background:#fbcfe8;border:1px solid #cbd5e1;cursor:pointer" title="Revision / Pink"></button>',
+                      '</div>',
+                      '<div id="sfInlineConfidentialWrap" style="display:none;align-items:center;gap:4px">',
+                        '<label style="font-size:11px;color:#475569;display:flex;align-items:center;gap:4px;cursor:pointer">',
+                          '<input type="checkbox" id="sfInlineConfidentialCheck" style="margin:0;cursor:pointer"> 🔒 To Editor',
+                        '</label>',
+                      '</div>',
+                    '</div>',
+                    '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:10px">',
+                      '<button type="button" onclick="window.__sfCloseAddCommentBox()" style="background:#ffffff;border:1px solid #cbd5e1;color:#475569;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">Cancel</button>',
+                      '<button type="button" onclick="window.__sfSubmitInlineComment()" id="sfSubmitInlineCommentBtn" style="background:#0f172a;border:none;color:#ffffff;padding:4px 12px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer">Save Comment</button>',
                     '</div>',
                   '</div>',
 
@@ -2596,7 +2631,7 @@ function injectNativeReviewerMatchmaking(force) {
                   '</div>',
 
                   '<div id="sfCommentsList" style="flex:1;overflow-y:auto;padding-right:4px">',
-                    '<div style="color:#94a3b8;font-size:13px;text-align:center;padding:40px 10px">No inline comments yet.<br>Highlight text on the left to add markups.</div>',
+                    '<div style="color:#94a3b8;font-size:13px;text-align:center;padding:40px 10px">No inline comments yet.<br>Click <strong>+ Add Comment</strong> above or highlight text to record markups.</div>',
                   '</div>',
                 '</div>',
               '</div>',
@@ -2945,11 +2980,6 @@ function injectNativeReviewerMatchmaking(force) {
 
     // ── Save Annotation ────────────────────────────────────────────────────
     function saveAnnotation() {
-        if (!currentSelectedRange || !currentSelectedRange.text) {
-            hideSelectionPopover();
-            return;
-        }
-
         var commentInput = document.getElementById('sfCommentInput');
         var comment = commentInput ? commentInput.value.trim() : '';
         if (!comment) {
@@ -2960,8 +2990,8 @@ function injectNativeReviewerMatchmaking(force) {
         // Capture state before clearing
         var savedRange = pendingRange;
         var savedColor = selectedHighlightColor || 'yellow';
-        var savedText  = currentSelectedRange.text;
-        var savedPid   = currentSelectedRange.paragraphId || '';
+        var savedText  = (currentSelectedRange && currentSelectedRange.text) ? currentSelectedRange.text : 'General Manuscript Feedback';
+        var savedPid   = (currentSelectedRange && currentSelectedRange.paragraphId) ? currentSelectedRange.paragraphId : '';
         var sid = currentSubmissionId || '1';
         var url = getContextBase() + '/scholarflow/saveAnnotation';
 
@@ -2990,7 +3020,7 @@ function injectNativeReviewerMatchmaking(force) {
         currentSelectedRange = null;
 
         // Inject permanent mark right away using the saved Range (instant visual feedback)
-        var injectedMark = injectMarkFromRange(savedRange, savedColor);
+        var injectedMark = (savedRange && savedText !== 'General Manuscript Feedback') ? injectMarkFromRange(savedRange, savedColor) : null;
 
         fetch(url, {
             method: 'POST',
@@ -3042,6 +3072,136 @@ function injectNativeReviewerMatchmaking(force) {
                 p.normalize();
             }
             alert('Network error saving comment: ' + err.message);
+        });
+    }
+
+    // ── Dedicated Sidebar Add Comment Controller ───────────────────────────
+    var inlineSelectedColor = 'yellow';
+    function openAddCommentBox() {
+        var box = document.getElementById('sfAddCommentBox');
+        if (!box) return;
+        box.style.display = 'block';
+        var note = document.getElementById('sfAddCommentTargetNote');
+        var sel = window.getSelection();
+        var selectedTxt = (sel && sel.toString()) ? sel.toString().trim() : '';
+        if (selectedTxt) {
+            currentSelectedRange = { text: selectedTxt, paragraphId: getSelectedParagraphId(sel) };
+            pendingRange = (sel.rangeCount > 0) ? sel.getRangeAt(0).cloneRange() : null;
+            if (note) note.textContent = 'Selected: \u201c' + (selectedTxt.length > 50 ? selectedTxt.substring(0, 47) + '...' : selectedTxt) + '\u201d';
+        } else {
+            if (note) note.textContent = '📌 General Manuscript Comment (No text highlighted)';
+        }
+        var txt = document.getElementById('sfInlineCommentText');
+        if (txt) {
+            txt.value = '';
+            setTimeout(function() { txt.focus(); }, 50);
+        }
+        var confWrap = document.getElementById('sfInlineConfidentialWrap');
+        if (confWrap) {
+            confWrap.style.display = (currentUserInfo && currentUserInfo.isEditor) ? 'none' : 'flex';
+        }
+        setInlineColor('yellow');
+    }
+
+    function closeAddCommentBox() {
+        var box = document.getElementById('sfAddCommentBox');
+        if (box) box.style.display = 'none';
+        var txt = document.getElementById('sfInlineCommentText');
+        if (txt) txt.value = '';
+    }
+
+    function setInlineColor(color) {
+        inlineSelectedColor = color;
+        ['yellow', 'green', 'blue', 'pink'].forEach(function(c) {
+            var btn = document.getElementById('sfColorBtn-' + c);
+            if (btn) {
+                btn.style.border = (c === color) ? '2px solid #0f172a' : '1px solid #cbd5e1';
+                btn.style.transform = (c === color) ? 'scale(1.15)' : 'scale(1)';
+            }
+        });
+    }
+
+    function submitInlineComment() {
+        var txt = document.getElementById('sfInlineCommentText');
+        var comment = txt ? txt.value.trim() : '';
+        if (!comment) {
+            alert('Please enter your comment or observation.');
+            return;
+        }
+
+        var sid = currentSubmissionId || '1';
+        var url = getContextBase() + '/scholarflow/saveAnnotation';
+        var isConfidential = false;
+        var confBox = document.getElementById('sfInlineConfidentialCheck');
+        if (confBox && confBox.checked) {
+            isConfidential = true;
+            confBox.checked = false;
+        }
+
+        var savedText = (currentSelectedRange && currentSelectedRange.text) ? currentSelectedRange.text : 'General Manuscript Feedback';
+        var savedPid = (currentSelectedRange && currentSelectedRange.paragraphId) ? currentSelectedRange.paragraphId : '';
+        var savedRange = pendingRange;
+        var savedColor = inlineSelectedColor || 'yellow';
+
+        var payload = {
+            submission_id: parseInt(sid, 10),
+            selected_text: savedText,
+            comment: comment,
+            color: savedColor,
+            paragraph_id: savedPid,
+            confidential_to_editor: isConfidential
+        };
+
+        var submitBtn = document.getElementById('sfSubmitInlineCommentBtn');
+        if (submitBtn) {
+            submitBtn.textContent = 'Saving...';
+            submitBtn.disabled = true;
+        }
+
+        // Inject highlight if range exists
+        var injectedMark = null;
+        if (savedRange && savedText !== 'General Manuscript Feedback') {
+            injectedMark = injectMarkFromRange(savedRange, savedColor);
+        }
+
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (submitBtn) {
+                submitBtn.textContent = 'Save Comment';
+                submitBtn.disabled = false;
+            }
+            if (data && data.annotation) {
+                cachedAnnotations.push(data.annotation);
+                closeAddCommentBox();
+                if (data.annotation.user_role === 'Editor') {
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('editor');
+                } else if (data.annotation.confidential_to_editor) {
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('reviewer_to_editor');
+                } else {
+                    if (typeof window.__sfFilterCommentsTab === 'function') window.__sfFilterCommentsTab('reviewer');
+                }
+                renderAnnotationsList(cachedAnnotations);
+                if (injectedMark && injectedMark.parentNode) {
+                    injectedMark.setAttribute('data-aid', data.annotation.id);
+                    injectedMark.id = 'sf-mark-' + data.annotation.id;
+                    injectedMark.setAttribute('onclick', 'window.__sfOnHighlightClick(' + data.annotation.id + ',event)');
+                }
+            } else if (data && data.error) {
+                alert('Error saving comment: ' + data.error);
+            }
+        })
+        .catch(function(err) {
+            if (submitBtn) {
+                submitBtn.textContent = 'Save Comment';
+                submitBtn.disabled = false;
+            }
+            alert('Failed to save comment: ' + err.message);
         });
     }
 
@@ -3372,7 +3532,7 @@ function injectNativeReviewerMatchmaking(force) {
         applyHighlightsToDocument(displayList);
 
         if (displayList.length === 0) {
-            var emptyMsg = 'No comments made by an editor recorded yet.<br>As an editor, highlight text on the left to add editorial comments.';
+            var emptyMsg = 'No comments made by an editor recorded yet.<br>Click <strong>+ Add Comment</strong> above or highlight text on the manuscript to add markups.';
             if (currentCommentFilter === 'reviewer_to_editor') {
                 emptyMsg = isEditor
                     ? '🔒 No confidential comments from reviewers to the editor yet.<br>When reviewers submit private notes for the editor, they appear here in read-only mode.'
@@ -3470,9 +3630,15 @@ function injectNativeReviewerMatchmaking(force) {
                     '<div style="font-size:11px;color:#64748b">' + esc(a.created_at) + '</div>',
                     sendCardAction,
                   '</div>',
-                  '<div style="font-size:13px;color:#475569;background:#f8fafc;border-left:3px solid ' + markColor + ';padding:6px 10px;border-radius:0 6px 6px 0;margin:4px 0;font-style:italic">',
-                    '"' + esc(a.selected_text.length > 95 ? a.selected_text.substring(0, 95) + '...' : a.selected_text) + '"',
-                  '</div>',
+                  (function() {
+                    var sText = (a.selected_text || '').trim();
+                    if (sText && sText !== 'General Manuscript Feedback') {
+                      var preview = sText.length > 95 ? sText.substring(0, 95) + '...' : sText;
+                      return '<div style="font-size:13px;color:#475569;background:#f8fafc;border-left:3px solid ' + markColor + ';padding:6px 10px;border-radius:0 6px 6px 0;margin:4px 0;font-style:italic">"' + esc(preview) + '"</div>';
+                    } else {
+                      return '<div style="font-size:11px;color:#64748b;background:#f8fafc;border-left:3px solid ' + markColor + ';padding:4px 8px;border-radius:0 6px 6px 0;margin:4px 0;font-weight:600">📌 General Manuscript Feedback</div>';
+                    }
+                  })(),
                   '<div style="font-size:13px;color:#0f172a;line-height:1.5;margin-top:2px;font-weight:500">' + esc(a.comment) + '</div>',
                 '</div>'
             ].join('');
